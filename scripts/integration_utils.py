@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import os
+import re
+import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -48,6 +50,61 @@ def env_csv_list(name: str, default_csv: str) -> list[str]:
 def env_keyword_set(name: str, default_csv: str) -> set[str]:
     """Read comma-separated env var into a lowercased keyword set."""
     return {part.lower() for part in env_csv_list(name, default_csv)}
+
+
+def resolve_secret_reference(raw: str | None) -> str | None:
+    """Resolve a literal secret, file path, or `sudo cat /path` reference."""
+    if raw is None:
+        return None
+    secret = raw.strip()
+    if not secret:
+        return None
+
+    command_match = re.match(r"^(?:sudo\s+)?cat\s+(.+)$", secret, re.IGNORECASE)
+    if command_match:
+        path = Path(command_match.group(1).strip().strip('"').strip("'")).expanduser()
+        if path.is_file():
+            return path.read_text(encoding="utf-8").strip()
+        try:
+            result = subprocess.run(
+                ["sudo", "cat", str(path)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.SubprocessError, TimeoutError):
+            return None
+        if result.returncode == 0:
+            return result.stdout.strip()
+        return None
+
+    path = Path(secret).expanduser()
+    if path.is_file():
+        return path.read_text(encoding="utf-8").strip()
+    return secret
+
+
+def resolve_plex_url(default: str) -> str:
+    """Resolve Plex base URL from env override or config default."""
+    url = os.getenv("PLEX_URL", "").strip()
+    if url:
+        return url.rstrip("/")
+    return default.rstrip("/")
+
+
+def resolve_plex_token(default_token_file: str) -> str:
+    """Resolve Plex token from env override or configured token file."""
+    token_file = (os.getenv("PLEX_TOKEN_FILE") or default_token_file or "").strip()
+    if token_file:
+        path = Path(token_file).expanduser()
+        if path.is_file():
+            return path.read_text(encoding="utf-8").strip()
+
+    token = resolve_secret_reference(os.getenv("PLEX_TOKEN"))
+    if token:
+        return token
+    return ""
 
 
 DEFAULT_BOT_SETTINGS_PATH = Path(__file__).resolve().parent.parent / "config" / "bot_settings.yaml"
@@ -154,21 +211,35 @@ def requester_tag_from_user(user: Optional[dict]) -> str:
 
 # ====== Base URL Helpers ======
 def radarr_base_url() -> str:
-    """Get Radarr base URL from env or radarr:7878."""
-    url = os.getenv("RADARR_URL")
+    """Get Radarr base URL from env override or shared config default."""
+    default_url = (
+        load_bot_settings().get("shared", {}).get("services", {}).get("radarr", {}).get("url")
+        or "http://radarr:7878"
+    )
+    url = os.getenv("RADARR_URL", "").strip()
     if url:
         return url.rstrip("/")
-    port = os.getenv("RADARR_PORT", "7878")
-    return f"http://radarr:{port}".rstrip("/")
+    host = os.getenv("RADARR_HOST", "").strip()
+    port = os.getenv("RADARR_PORT", "").strip()
+    if host or port:
+        return f"http://{host or 'radarr'}:{port or '7878'}".rstrip("/")
+    return str(default_url).rstrip("/")
 
 
 def sonarr_base_url() -> str:
-    """Get Sonarr base URL from env or sonarr:8989."""
-    url = os.getenv("SONARR_URL")
+    """Get Sonarr base URL from env override or shared config default."""
+    default_url = (
+        load_bot_settings().get("shared", {}).get("services", {}).get("sonarr", {}).get("url")
+        or "http://sonarr:8989"
+    )
+    url = os.getenv("SONARR_URL", "").strip()
     if url:
         return url.rstrip("/")
-    port = os.getenv("SONARR_PORT", "8989")
-    return f"http://sonarr:{port}".rstrip("/")
+    host = os.getenv("SONARR_HOST", "").strip()
+    port = os.getenv("SONARR_PORT", "").strip()
+    if host or port:
+        return f"http://{host or 'sonarr'}:{port or '8989'}".rstrip("/")
+    return str(default_url).rstrip("/")
 
 
 def overseerr_base_url() -> str:
@@ -177,15 +248,23 @@ def overseerr_base_url() -> str:
     Resolution order:
     1) OVERSEERR_URL
     2) SEERR_URL
-    3) http://<OVERSEERR_HOST|SEERR_HOST|seerr>:<OVERSEERR_PORT|SEERR_PORT|5055>
+    3) http://<OVERSEERR_HOST|SEERR_HOST|overseerr>:<OVERSEERR_PORT|SEERR_PORT|5055>
+    4) shared config default
     """
-    url = os.getenv("OVERSEERR_URL") or os.getenv("SEERR_URL")
+    url = (os.getenv("OVERSEERR_URL") or os.getenv("SEERR_URL") or "").strip()
     if url:
         return url.rstrip("/")
 
-    host = os.getenv("OVERSEERR_HOST") or os.getenv("SEERR_HOST") or "seerr"
-    port = os.getenv("OVERSEERR_PORT") or os.getenv("SEERR_PORT") or "5055"
-    return f"http://{host}:{port}".rstrip("/")
+    host = os.getenv("OVERSEERR_HOST") or os.getenv("SEERR_HOST")
+    port = os.getenv("OVERSEERR_PORT") or os.getenv("SEERR_PORT")
+    if host or port:
+        return f"http://{host or 'overseerr'}:{port or '5055'}".rstrip("/")
+
+    default_url = (
+        load_bot_settings().get("shared", {}).get("services", {}).get("overseerr", {}).get("url")
+        or "http://overseerr:5055"
+    )
+    return str(default_url).rstrip("/")
 
 
 # ====== Session Factories ======

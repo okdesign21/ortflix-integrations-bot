@@ -10,10 +10,11 @@ One single webhook in Sonarr covers all scripts — the bot dispatches by event.
     Name:    integrations-bot
     URL:     http://integrations-bot:7777/api/v1/webhooks/sonarr
     Method:  POST
-    Events:  On Download ✓   On Upgrade ✓   On Series Add ✓
+    Events:  On Import ✓   On Upgrade ✓   On Series Add ✓
     Headers: X-Webhook-Token: <value of WEBHOOK_TOKEN env var>  [optional]
 
-  This script fires for "Download" and "Upgrade" events.
+  This script fires for the "Download" payload event.
+  Sonarr uses that payload value for both On Import and On Upgrade.
   The bot injects sonarr_eventtype, sonarr_series_originallanguage,
   sonarr_series_title, and sonarr_episodefile_path from the webhook payload.
 
@@ -34,7 +35,13 @@ import os
 import subprocess
 import sys
 
-from integration_utils import env_str, load_bot_settings, telegram_post
+from integration_utils import (
+    env_str,
+    load_bot_settings,
+    resolve_plex_token,
+    resolve_plex_url,
+    telegram_post,
+)
 
 BOT_SETTINGS = load_bot_settings()
 SHARED_SETUP = BOT_SETTINGS["shared"]
@@ -43,7 +50,7 @@ LANG_MAP = SHARED_SETUP["audio_language_map"]
 LANG_NAME_MAP = SONARR_SETUP["language_name_map"]
 SUPPORTED_EXTENSIONS = set(SONARR_SETUP["supported_extensions"])
 
-PLEX_URL = env_str("PLEX_URL", SHARED_SETUP["plex"]["url"])
+PLEX_URL = resolve_plex_url(str(SHARED_SETUP["plex"]["url"]))
 PLEX_TOKEN_FILE = env_str("PLEX_TOKEN_FILE", SHARED_SETUP["plex"]["token_file"])
 PLEX_TV_SECTION_ID = env_str("PLEX_TV_SECTION_ID", SONARR_SETUP["plex_section_id"])
 
@@ -145,11 +152,7 @@ def plex_analyze_item(file_path: str) -> None:
     try:
         import urllib.request
 
-        # Prefer file (Docker compose); fall back to env var (k8s)
-        if os.path.exists(PLEX_TOKEN_FILE):
-            token = open(PLEX_TOKEN_FILE).read().strip()
-        else:
-            token = os.environ.get("PLEX_TOKEN", "").strip()
+        token = resolve_plex_token(PLEX_TOKEN_FILE)
         if not token:
             print("  Plex: no token available (set PLEX_TOKEN_FILE or PLEX_TOKEN)")
             return

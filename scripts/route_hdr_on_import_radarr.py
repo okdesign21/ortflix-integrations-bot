@@ -17,7 +17,7 @@ One single webhook in Radarr covers all scripts — the bot dispatches by event.
     Name:    integrations-bot
     URL:     http://integrations-bot:7777/api/v1/webhooks/radarr
     Method:  POST
-    Events:  On Movie Added ✓  (also enable Download/Upgrade for other scripts)
+    Events:  On Movie Added ✓  (also enable File Import/File Upgrade for other scripts)
     Headers: X-Webhook-Token: <value of WEBHOOK_TOKEN env var>  [optional]
 
   This script fires for the "MovieAdded" event.

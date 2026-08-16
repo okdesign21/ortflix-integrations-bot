@@ -9,10 +9,11 @@ One single webhook in Radarr covers all scripts — the bot dispatches by event.
     Name:    integrations-bot
     URL:     http://integrations-bot:7777/api/v1/webhooks/radarr
     Method:  POST
-    Events:  On Download ✓   On Upgrade ✓   On Movie Added ✓
+    Events:  On File Import ✓   On File Upgrade ✓   On Movie Added ✓
     Headers: X-Webhook-Token: <value of WEBHOOK_TOKEN env var>  [optional]
 
-  This script fires for "Download" and "Upgrade" events.
+  This script fires for the "Download" payload event.
+  Radarr uses that payload value for both On File Import and On File Upgrade.
   The bot injects radarr_eventtype, radarr_movie_originallanguage, radarr_movie_title,
   radarr_movie_year, and radarr_moviefile_path from the webhook payload.
   Language is read from radarr_movie_originallanguage — works for any language.
@@ -45,7 +46,14 @@ import sys
 
 # telegram_post is optional when running outside the integrations runtime
 try:
-    from integration_utils import env_csv_list, env_str, load_bot_settings, telegram_post
+    from integration_utils import (
+        env_csv_list,
+        env_str,
+        load_bot_settings,
+        resolve_plex_token,
+        resolve_plex_url,
+        telegram_post,
+    )
 except ImportError:
 
     def env_csv_list(name, default_csv):
@@ -67,6 +75,16 @@ except ImportError:
     def telegram_post(text):
         pass  # no-op in bulk mode
 
+    def resolve_plex_url(default):
+        return env_str("PLEX_URL", default).rstrip("/")
+
+    def resolve_plex_token(default_token_file):
+        token_file = env_str("PLEX_TOKEN_FILE", default_token_file)
+        if os.path.exists(token_file):
+            with open(token_file, encoding="utf-8") as handle:
+                return handle.read().strip()
+        return os.environ.get("PLEX_TOKEN", "").strip()
+
 
 BOT_SETTINGS = load_bot_settings()
 SHARED_SETUP = BOT_SETTINGS["shared"]
@@ -77,7 +95,7 @@ MOVIES_DIRS = env_csv_list(
     "AUDIO_LANG_MOVIES_DIRS",
     ",".join(RADARR_SETUP["movies_dirs"]),
 )
-PLEX_URL = env_str("PLEX_URL", SHARED_SETUP["plex"]["url"])
+PLEX_URL = resolve_plex_url(str(SHARED_SETUP["plex"]["url"]))
 PLEX_TOKEN_FILE = env_str("PLEX_TOKEN_FILE", SHARED_SETUP["plex"]["token_file"])
 PLEX_SECTION_ID = env_str("PLEX_SECTION_ID", RADARR_SETUP["plex_section_id"])
 
@@ -357,11 +375,7 @@ def plex_analyze_item(file_path):
         import urllib.parse
         import urllib.request
 
-        # Prefer file (Docker compose); fall back to env var (k8s)
-        if os.path.exists(PLEX_TOKEN_FILE):
-            token = open(PLEX_TOKEN_FILE).read().strip()
-        else:
-            token = os.environ.get("PLEX_TOKEN", "").strip()
+        token = resolve_plex_token(PLEX_TOKEN_FILE)
         if not token:
             print("  Plex: no token available (set PLEX_TOKEN_FILE or PLEX_TOKEN)")
             return
@@ -397,7 +411,7 @@ def run_radarr_mode():
         print("[audio_fix_radarr] Test event received — script is working.")
         sys.exit(0)
 
-    if event not in ("Download", "Upgrade"):
+    if event != "Download":
         print(f"[audio_fix_radarr] Skipping event type: {event!r}")
         sys.exit(0)
 

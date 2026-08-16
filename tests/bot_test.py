@@ -256,8 +256,18 @@ async def test_radarr_webhook_ignored_event(mock_env, mock_telegram_bot):
 
 
 @pytest.mark.asyncio
-async def test_radarr_webhook_accepted_event(mock_env, mock_telegram_bot):
-    """Mapped events should schedule configured scripts."""
+@pytest.mark.parametrize(
+    "event_type,expected_event_type,expected_script",
+    [
+        ("MovieAdded", "MovieAdded", "route_hdr_on_import_radarr.py"),
+        ("File Import", "Download", "tag_overseerr_requester_radarr.py"),
+        ("File Upgrade", "Download", "tag_overseerr_requester_radarr.py"),
+    ],
+)
+async def test_radarr_webhook_accepted_event(
+    mock_env, mock_telegram_bot, event_type, expected_event_type, expected_script
+):
+    """Mapped Radarr events should schedule configured scripts."""
     import bot as bot_module
     from bot import app
 
@@ -265,7 +275,7 @@ async def test_radarr_webhook_accepted_event(mock_env, mock_telegram_bot):
     bot_module.app_telegram = MagicMock()
 
     payload = {
-        "eventType": "MovieAdded",
+        "eventType": event_type,
         "movie": {"id": 10, "title": "Test Movie"},
     }
 
@@ -278,14 +288,25 @@ async def test_radarr_webhook_accepted_event(mock_env, mock_telegram_bot):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "accepted"
-    assert body["event_type"] == "MovieAdded"
-    assert body["scheduled"] == 1
-    assert "route_hdr_on_import_radarr.py" in body["scripts"]
+    assert body["event_type"] == expected_event_type
+    expected_count = 1 if expected_script == "route_hdr_on_import_radarr.py" else 2
+    assert body["scheduled"] == expected_count
+    assert expected_script in body["scripts"]
 
 
 @pytest.mark.asyncio
-async def test_sonarr_webhook_accepts_event(mock_env, mock_telegram_bot):
-    """Sonarr router should accept valid event payloads."""
+@pytest.mark.parametrize(
+    "event_type,expected_event_type,expected_script",
+    [
+        ("Download", "Download", "tag_overseerr_requester_sonarr.py"),
+        ("Import", "Download", "tag_overseerr_requester_sonarr.py"),
+        ("Series Add", "SeriesAdd", "route_hdr_on_import_sonarr.py"),
+    ],
+)
+async def test_sonarr_webhook_accepts_event(
+    mock_env, mock_telegram_bot, event_type, expected_event_type, expected_script
+):
+    """Sonarr router should accept native and UI-style event labels."""
     import bot as bot_module
     from bot import app
 
@@ -293,7 +314,7 @@ async def test_sonarr_webhook_accepts_event(mock_env, mock_telegram_bot):
     bot_module.app_telegram = MagicMock()
 
     payload = {
-        "eventType": "Download",
+        "eventType": event_type,
         "series": {"id": 20, "title": "Test Show"},
     }
 
@@ -306,7 +327,8 @@ async def test_sonarr_webhook_accepts_event(mock_env, mock_telegram_bot):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "accepted"
-    assert body["event_type"] == "Download"
+    assert body["event_type"] == expected_event_type
+    assert expected_script in body["scripts"]
 
 
 @pytest.mark.asyncio
