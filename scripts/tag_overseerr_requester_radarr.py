@@ -13,10 +13,11 @@ One single webhook in Radarr covers all scripts — the bot dispatches by event.
     Name:    integrations-bot
     URL:     http://integrations-bot:7777/api/v1/webhooks/radarr
     Method:  POST
-    Events:  On Download ✓   On Upgrade ✓   On Movie Added ✓
+    Events:  On File Import ✓   On File Upgrade ✓   On Movie Added ✓
     Headers: X-Webhook-Token: <value of WEBHOOK_TOKEN env var>  [optional]
 
-  This script fires for "Download" and "Upgrade" events.
+  This script fires for the "Download" payload event.
+  Radarr uses that payload value for both On File Import and On File Upgrade.
   The bot injects radarr_eventtype, radarr_movie_tmdbid, radarr_movie_imdbid,
   radarr_movie_title, radarr_movie_year from the webhook payload.
 
@@ -62,7 +63,7 @@ def main():
         print("[tag_overseerr_requester_radarr] Test event received — script is working.")
         sys.exit(0)
 
-    if event not in ("Download", "Upgrade"):
+    if event != "Download":
         print(f"[tag_overseerr_requester_radarr] Skipping event type: {event!r}")
         sys.exit(0)
 

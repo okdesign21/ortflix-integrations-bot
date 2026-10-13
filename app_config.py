@@ -4,7 +4,11 @@ Manages URLs, API keys, and extensible webhook handlers.
 """
 
 import os
+from functools import lru_cache
+from pathlib import Path
 from typing import Callable, Optional
+
+import yaml
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -34,29 +38,94 @@ def _clean_username(name: Optional[str]) -> Optional[str]:
 
 
 # ====== SERVICE URLS ======
-def _get_service_url(env_var: str, default_host: str, default_port: int) -> str:
-    """Get service URL from env or construct from host:port.
+DEFAULT_BOT_SETTINGS_PATH = Path(__file__).resolve().parent / "config" / "bot_settings.yaml"
+BOT_SETTINGS_OVERRIDE_CANDIDATES = (
+    Path("/config/bot_settings.yaml"),
+    Path("/config/bot_settings.yml"),
+)
+BOT_SETTINGS_ENV_VAR = "ORTFLIX_BOT_SETTINGS_FILE"
+
+
+def _deep_merge_dicts(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in override.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge_dicts(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_settings_file(path: Path) -> dict:
+    with path.open(encoding="utf-8") as handle:
+        data = yaml.safe_load(handle) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid config shape in {path}: expected top-level object")
+    return data
+
+
+@lru_cache(maxsize=1)
+def _load_bot_settings() -> dict:
+    settings = _load_settings_file(DEFAULT_BOT_SETTINGS_PATH)
+    override_raw = os.getenv(BOT_SETTINGS_ENV_VAR, "").strip()
+    override_path = Path(override_raw).expanduser() if override_raw else None
+    if override_path:
+        if not override_path.is_file():
+            raise ValueError(f"{BOT_SETTINGS_ENV_VAR} points to a missing file: {override_path}")
+        return _deep_merge_dicts(settings, _load_settings_file(override_path))
+
+    for candidate in BOT_SETTINGS_OVERRIDE_CANDIDATES:
+        if candidate.is_file():
+            return _deep_merge_dicts(settings, _load_settings_file(candidate))
+    return settings
+
+
+def _service_default_url(service_name: str, fallback: str) -> str:
+    shared = _load_bot_settings().get("shared", {})
+    services = shared.get("services", {})
+    service_cfg = services.get(service_name, {})
+    url = service_cfg.get("url")
+    if isinstance(url, str) and url.strip():
+        return url.rstrip("/")
+    return fallback.rstrip("/")
+
+
+def _get_service_url(
+    env_var: str,
+    service_name: str,
+    default_host: str,
+    default_port: int,
+    legacy_env_var: str | None = None,
+) -> str:
+    """Get service URL from env override, host/port, or config default.
 
     Args:
         env_var: Environment variable name for the URL (e.g., "OVERSEERR_URL")
+        service_name: Service key under shared.services in bot settings
         default_host: Primary default hostname
         default_port: Default port number
     """
     url = os.getenv(env_var)
+    if not url and legacy_env_var:
+        url = os.getenv(legacy_env_var)
     if url:
         return url.rstrip("/")
-    host = os.getenv(f"{env_var.replace('_URL', '_HOST')}", default_host)
-    port = os.getenv(f"{env_var.replace('_URL', '_PORT')}", str(default_port))
-    return f"http://{host}:{port}"
+    host = os.getenv(f"{env_var.replace('_URL', '_HOST')}")
+    port = os.getenv(f"{env_var.replace('_URL', '_PORT')}")
+    if not host and legacy_env_var:
+        host = os.getenv(f"{legacy_env_var.replace('_URL', '_HOST')}")
+    if not port and legacy_env_var:
+        port = os.getenv(f"{legacy_env_var.replace('_URL', '_PORT')}")
+    if host or port:
+        return f"http://{host or default_host}:{port or default_port}".rstrip("/")
+    return _service_default_url(service_name, f"http://{default_host}:{default_port}")
 
 
-# Service URLs (for both bot and tautulli script usage)
-# Supports both "seerr" and "overseerr" as default hostnames
-OVERSEERR_URL = _get_service_url("OVERSEERR_URL", "seerr", 5055)
-# Same resolution as OVERSEERR_URL: RADARR_URL, or RADARR_HOST + RADARR_PORT.
-# Default host radarr matches typical Docker/Kubernetes service name on the same network/namespace.
-RADARR_URL = _get_service_url("RADARR_URL", "radarr", 7878)
-SONARR_URL = _get_service_url("SONARR_URL", "sonarr", 8989)
+# Service URLs (for both bot and script usage)
+OVERSEERR_URL = _get_service_url("OVERSEERR_URL", "overseerr", "overseerr", 5055, legacy_env_var="SEERR_URL")
+RADARR_URL = _get_service_url("RADARR_URL", "radarr", "radarr", 7878)
+SONARR_URL = _get_service_url("SONARR_URL", "sonarr", "sonarr", 8989)
 
 # API Keys
 OVERSEERR_API_KEY = os.getenv("OVERSEERR_API_KEY") or os.getenv("API_KEY")

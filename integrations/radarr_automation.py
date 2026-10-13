@@ -10,6 +10,7 @@ from app_config import WEBHOOK_TOKEN
 
 from .automation_defaults import (
     PROJECT_SCRIPTS_DIR,
+    canonical_radarr_event_type,
     extract_event,
     radarr_scripts_for_event,
     resolve_timeout_seconds,
@@ -40,7 +41,7 @@ def configure_webhook_token_getter(getter):
 
 def _radarr_event_type(payload: dict) -> str:
     """Normalize event field names from Radarr payloads."""
-    return extract_event(payload, "eventType", "event")
+    return canonical_radarr_event_type(extract_event(payload, "eventType", "event"))
 
 
 def _resolve_radarr_scripts_for_event(event_type: str) -> list[str]:
