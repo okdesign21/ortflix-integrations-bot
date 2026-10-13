@@ -10,6 +10,7 @@ from app_config import WEBHOOK_TOKEN
 
 from .automation_defaults import (
     PROJECT_SCRIPTS_DIR,
+    canonical_sonarr_event_type,
     extract_event,
     resolve_timeout_seconds,
     sonarr_scripts_for_event,
@@ -31,7 +32,7 @@ SONARR_SCRIPT_DIR = PROJECT_SCRIPTS_DIR
 
 
 def _sonarr_event_type(payload: dict) -> str:
-    return extract_event(payload, "eventType", "event")
+    return canonical_sonarr_event_type(extract_event(payload, "eventType", "event"))
 
 
 def configure_webhook_token_getter(getter):

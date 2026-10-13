@@ -90,13 +90,13 @@ Environment variables remain supported for runtime wiring, secrets, and targeted
 | `TELEGRAM_TOKEN` | Yes | - | Telegram bot token from BotFather |
 | `OVERSEERR_API_KEY` | Yes | - | Overseerr/Seerr API key |
 | `TELEGRAM_CHAT_ID` | Yes | - | Telegram chat/user ID |
-| `OVERSEERR_URL` | No | `http://seerr:5055` | Seerr base URL, or set `OVERSEERR_HOST` + `OVERSEERR_PORT` instead |
-| `SONARR_URL` | No | `http://sonarr:8989` | Sonarr base URL, or set `SONARR_HOST` + `SONARR_PORT` instead |
+| `OVERSEERR_URL` | No | `shared.services.overseerr.url` | Overseerr base URL, or set `OVERSEERR_HOST` + `OVERSEERR_PORT` instead |
+| `SONARR_URL` | No | `shared.services.sonarr.url` | Sonarr base URL, or set `SONARR_HOST` + `SONARR_PORT` instead |
 | `WEBHOOK_HOST` | No | `0.0.0.0` | Bind host for FastAPI |
 | `WEBHOOK_PORT` | No | `7777` | Webhook service port |
 | `WEBHOOK_TOKEN` | Yes* | - | Webhook auth token required by default |
 | `ALLOW_INSECURE_WEBHOOKS` | No | `false` | Explicitly allow no webhook token on trusted private networks only |
-| `RADARR_URL` | No | `http://radarr:7878` | Radarr base URL (no trailing slash), or `RADARR_HOST` + `RADARR_PORT` — same rules as `OVERSEERR_URL` |
+| `RADARR_URL` | No | `shared.services.radarr.url` | Radarr base URL (no trailing slash), or `RADARR_HOST` + `RADARR_PORT` — same rules as `OVERSEERR_URL` |
 | `LOG_LEVEL` | No | `INFO` | Python logging level |
 
 ### Feature Keys
@@ -113,9 +113,9 @@ Environment variables remain supported for runtime wiring, secrets, and targeted
 | `MANUAL_ACTION_TIMEOUT` | `600` | Timeout for Telegram-triggered manual scripts |
 | `MANUAL_ACTION_OUTPUT_LIMIT` | `3500` | Max output chars returned to Telegram |
 | `AUDIO_LANG_MOVIES_DIRS` | `/movies,/movies-hdr` | Bulk audio-language fixer; prefer `config/bot_settings.yaml` for shared defaults |
-| `PLEX_URL` | `http://localhost:32400` | Audio-language script post-processing |
-| `PLEX_TOKEN_FILE` | `/run/secrets/plex_token` | Plex token (Docker compose — file path) |
-| `PLEX_TOKEN` | - | Plex token (k8s fallback — env var; used when file is absent) |
+| `PLEX_URL` | `shared.plex.url` | Shared Plex base URL for Telegram/manual actions and audio-language post-processing |
+| `PLEX_TOKEN_FILE` | `shared.plex.token_file` | Shared Plex token file (Docker compose) |
+| `PLEX_TOKEN` | - | Shared Plex token env fallback (k8s/manual runs) |
 | `PLEX_SECTION_ID` | `1` | Movies Plex library section ID for audio-language script |
 | `PLEX_TV_SECTION_ID` | `2` | TV Plex library section ID for audio-language script |
 | `KOMETA_ASSET_DIR` | `/opt/kometa/config/assets/Movies_Shows` | Asset root for `scripts/check_plex_titles.py` |
@@ -136,8 +136,8 @@ Core keys for notifications and approvals: `TELEGRAM_TOKEN`, `OVERSEERR_API_KEY`
 Radarr automation uses `RADARR_API_KEY` and `RADARR_URL`; Sonarr automation uses
 `SONARR_API_KEY` and `SONARR_URL`. Tautulli watched automation uses `RADARR_API_KEY`
 and optionally posts Letterboxd links through `DISCORD_WEBHOOK_URL` for usernames in
-`LETTERBOXD_USERS`. Set `OVERSEERR_URL`, `RADARR_URL`, or `SONARR_URL` only when the
-default service names and ports do not match your network.
+`LETTERBOXD_USERS`. Set `OVERSEERR_URL`, `RADARR_URL`, or `SONARR_URL` only when you
+need an environment override; otherwise use `config/bot_settings.yaml`.
 
 Seerr must be reachable for profile enrichment. Radarr is only used to decorate movie `MEDIA_AVAILABLE` messages; pending and failed flows do not call Radarr.
 
@@ -178,6 +178,9 @@ Current actions:
 3. `audio_fix_radarr.py --apply` live changes
 
 Only the configured `TELEGRAM_CHAT_ID` can trigger these actions.
+Manual actions use the same `PLEX_URL` / `PLEX_TOKEN_FILE` / `PLEX_TOKEN`
+configuration as the rest of the bot. Use `config/bot_settings.yaml` to override
+default Plex and service URLs per deployment.
 
 ## Development
 
@@ -225,7 +228,8 @@ or modify mounted media files. Mount the media and configuration paths required 
 your scripts, and use Docker secrets for tokens and API keys where possible. The
 container entrypoint is `python -m bot`.
 
-On the default bridge network, pass `OVERSEERR_URL` and `RADARR_URL` (for example `http://host.docker.internal:5055`). On a user-defined compose network with services named `seerr` and `radarr`, you can omit those URLs and only set `RADARR_API_KEY` when you want folder and quality details on `MEDIA_AVAILABLE`.
+Use `config/bot_settings.yaml` for default service URLs and Plex settings in Docker
+deployments. Keep environment variables for secrets and per-container overrides only.
 
 For custom host layouts, mount your media roots and set `AUDIO_LANG_MOVIES_DIRS`, `RADARR_SDR_ROOT`, and `RADARR_HDR_ROOT` to match your folder structure.
 

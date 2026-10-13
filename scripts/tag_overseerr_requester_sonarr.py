@@ -12,10 +12,11 @@ One single webhook in Sonarr covers all scripts — the bot dispatches by event.
     Name:    integrations-bot
     URL:     http://integrations-bot:7777/api/v1/webhooks/sonarr
     Method:  POST
-    Events:  On Download ✓   On Upgrade ✓   On Series Add ✓
+    Events:  On Import ✓   On Upgrade ✓   On Series Add ✓
     Headers: X-Webhook-Token: <value of WEBHOOK_TOKEN env var>  [optional]
 
-  This script fires for "Download" and "Upgrade" events.
+  This script fires for the "Download" payload event.
+  Sonarr uses that payload value for both On Import and On Upgrade.
   The bot injects sonarr_eventtype, sonarr_series_tvdbid, sonarr_series_imdbid,
   sonarr_series_title, sonarr_series_year from the webhook payload.
 

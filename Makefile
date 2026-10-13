@@ -36,7 +36,7 @@ format: ## Format code
 
 clean: ## Clean up generated files and caches
 	@echo "Cleaning up..."
-	@rm -rf .venv .pytest_cache .ruff_cache .mypy_cache htmlcov _version.py *.egg-info
+	@rm -rf .venv .pytest_cache .ruff_cache .mypy_cache htmlcov build dist _version.py *.egg-info
 	@rm -f .coverage
 	@find . -maxdepth 1 -type f -name '.coverage.*' -delete
 	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
