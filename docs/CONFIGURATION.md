@@ -57,10 +57,19 @@ shared:
   plex:
     url: http://localhost:32400
     token_file: /run/secrets/plex_token
+  services:
+    overseerr:
+      url: http://overseerr:5055
+    radarr:
+      url: http://radarr:7878
+    sonarr:
+      url: http://sonarr:8989
 ```
 
 Use `PLEX_TOKEN_FILE` or `PLEX_TOKEN` environment settings for deployment-specific
-secret wiring. Do not put a Plex token value in YAML.
+secret wiring. Do not put a Plex token value in YAML. Telegram manual actions use
+the same shared Plex settings. Use `shared.services.*.url` in the config file to
+override default service URLs for a deployment.
 
 ### `audio_fix`
 
@@ -140,9 +149,11 @@ After changing configuration:
 
 1. Confirm every media path exists inside the bot container.
 2. Confirm Radarr/Sonarr use the same mounted path names as the bot.
-3. Run a dry-run action before using an `--apply` action.
-4. Send a test webhook from [WEBHOOK_SETUP.md](WEBHOOK_SETUP.md).
-5. Check logs for missing files, invalid YAML, or permission errors.
+3. Confirm the bot container can reach Plex via `PLEX_URL` and can read the Plex token.
+4. Confirm any Kometa asset paths used by `/actions` are mounted inside the bot container.
+5. Run a dry-run action before using an `--apply` action.
+6. Send a test webhook from [WEBHOOK_SETUP.md](WEBHOOK_SETUP.md).
+7. Check logs for missing files, invalid YAML, or permission errors.
 
 Invalid YAML, a non-object top-level value, or a missing explicit override path causes
 the script to fail with an actionable error. Never commit personal override files or

@@ -15,7 +15,7 @@ One single webhook in Sonarr covers all scripts — the bot dispatches by event.
     Events:  On Series Add ✓  (also enable Download/Upgrade for other scripts)
     Headers: X-Webhook-Token: <value of WEBHOOK_TOKEN env var>  [optional]
 
-  This script fires for the "SeriesAdd" event.
+  This script fires for the "SeriesAdd" payload event.
   The bot injects sonarr_eventtype and sonarr_series_id from the webhook payload.
 
 ── Env vars (set in integrations-bot container) ──────────────────────────────
@@ -78,7 +78,7 @@ def main() -> None:
         print("[INFO] Test event received — script is working correctly.")
         sys.exit(0)
 
-    if event not in ("SeriesAdd", "Download", "Upgrade"):
+    if event != "SeriesAdd":
         print(f"[INFO] Ignoring event type '{event}'.")
         sys.exit(0)
 

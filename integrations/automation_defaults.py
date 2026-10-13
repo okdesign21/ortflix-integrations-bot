@@ -11,13 +11,35 @@ DEFAULT_SCRIPT_TIMEOUT_SECONDS = 180
 RADARR_EVENT_SCRIPTS: dict[str, list[str]] = {
     "MovieAdded": ["route_hdr_on_import_radarr.py"],
     "Download": ["tag_overseerr_requester_radarr.py", "audio_fix_radarr.py"],
-    "Upgrade": ["tag_overseerr_requester_radarr.py", "audio_fix_radarr.py"],
+}
+
+RADARR_EVENT_ALIASES: dict[str, str] = {
+    "download": "Download",
+    "import": "Download",
+    "file_import": "Download",
+    "on_file_import": "Download",
+    "upgrade": "Download",
+    "file_upgrade": "Download",
+    "on_file_upgrade": "Download",
+    "movieadded": "MovieAdded",
+    "movie_added": "MovieAdded",
+    "on_movie_added": "MovieAdded",
 }
 
 SONARR_EVENT_SCRIPTS: dict[str, list[str]] = {
     "SeriesAdd": ["route_hdr_on_import_sonarr.py"],
     "Download": ["tag_overseerr_requester_sonarr.py", "audio_fix_sonarr.py"],
-    "Upgrade": ["tag_overseerr_requester_sonarr.py", "audio_fix_sonarr.py"],
+}
+
+SONARR_EVENT_ALIASES: dict[str, str] = {
+    "download": "Download",
+    "import": "Download",
+    "on_import": "Download",
+    "upgrade": "Download",
+    "on_upgrade": "Download",
+    "seriesadd": "SeriesAdd",
+    "series_add": "SeriesAdd",
+    "on_series_add": "SeriesAdd",
 }
 
 TAUTULLI_EVENT_SCRIPTS: dict[str, str] = {
@@ -48,14 +70,30 @@ def normalize_event_token(value: str) -> str:
     return (value or "").strip().lower().replace(" ", "_")
 
 
+def canonical_radarr_event_type(value: str) -> str:
+    """Map Radarr UI labels and aliases to the webhook eventType value."""
+    event_type = (value or "").strip()
+    if not event_type:
+        return ""
+    return RADARR_EVENT_ALIASES.get(normalize_event_token(event_type), event_type)
+
+
+def canonical_sonarr_event_type(value: str) -> str:
+    """Map Sonarr UI labels and aliases to the webhook eventType value."""
+    event_type = (value or "").strip()
+    if not event_type:
+        return ""
+    return SONARR_EVENT_ALIASES.get(normalize_event_token(event_type), event_type)
+
+
 def radarr_scripts_for_event(event_type: str) -> list[str]:
     """Return Radarr scripts for a given Radarr event type."""
-    return RADARR_EVENT_SCRIPTS.get(event_type, [])
+    return RADARR_EVENT_SCRIPTS.get(canonical_radarr_event_type(event_type), [])
 
 
 def sonarr_scripts_for_event(event_type: str) -> list[str]:
     """Return Sonarr scripts for a given Sonarr event type."""
-    return SONARR_EVENT_SCRIPTS.get(event_type, [])
+    return SONARR_EVENT_SCRIPTS.get(canonical_sonarr_event_type(event_type), [])
 
 
 def tautulli_script_for_event(event: str) -> str | None:

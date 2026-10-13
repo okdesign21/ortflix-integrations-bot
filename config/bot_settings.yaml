@@ -3,6 +3,14 @@ shared:
     url: http://localhost:32400
     token_file: /run/secrets/plex_token
 
+  services:
+    overseerr:
+      url: http://overseerr:5055
+    radarr:
+      url: http://radarr:7878
+    sonarr:
+      url: http://sonarr:8989
+
   audio_language_map:
     en: eng
     ja: jpn

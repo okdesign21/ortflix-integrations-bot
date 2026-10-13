@@ -70,15 +70,15 @@ requests, but normal application startup rejects that configuration unless
 
 1. Open Settings -> Connect -> Webhook.
 2. Set the URL to `http://<bot-host>:7777/api/v1/webhooks/radarr`.
-3. Enable `MovieAdded`, `Download`, and `Upgrade` if you use all movie scripts.
+3. Enable `On Movie Added`, `On File Import`, and `On File Upgrade` if you use all movie scripts.
 4. Add the `x-webhook-token` header if enabled.
 5. The bot executes Radarr scripts from the baked-in `scripts/` folder.
 
 Script map:
 
-1. `MovieAdded` -> `scripts/route_hdr_on_import_radarr.py`
-2. `Download` -> `scripts/tag_overseerr_requester_radarr.py`, `scripts/audio_fix_radarr.py`
-3. `Upgrade` -> `scripts/tag_overseerr_requester_radarr.py`, `scripts/audio_fix_radarr.py`
+1. `MovieAdded` (`On Movie Added` in Radarr) -> `scripts/route_hdr_on_import_radarr.py`
+2. `Download` (`On File Import` and `On File Upgrade` in Radarr) -> `scripts/tag_overseerr_requester_radarr.py`, `scripts/audio_fix_radarr.py`
+3. Radarr does not send `FileImport` or `Upgrade` as `eventType`; upgrades still arrive as `Download` (with `isUpgrade: true` in the payload).
 4. Other Radarr event names are accepted but ignored unless added to the event map.
 
 Radarr sends its native JSON payload. The bot reads `eventType` (or `event`) and
@@ -107,9 +107,9 @@ Useful env vars:
 
 Script map:
 
-1. `SeriesAdd` -> `scripts/route_hdr_on_import_sonarr.py`
-2. `Download` -> `scripts/tag_overseerr_requester_sonarr.py`, `scripts/audio_fix_sonarr.py`
-3. `Upgrade` -> `scripts/tag_overseerr_requester_sonarr.py`, `scripts/audio_fix_sonarr.py`
+1. `SeriesAdd` (`On Series Add` in Sonarr) -> `scripts/route_hdr_on_import_sonarr.py`
+2. `Download` (`On Import` and `On Upgrade` in Sonarr) -> `scripts/tag_overseerr_requester_sonarr.py`, `scripts/audio_fix_sonarr.py`
+3. Sonarr does not send `Import` or `Upgrade` as `eventType`; upgrades still arrive as `Download` (with `isUpgrade: true` in the payload).
 4. Other Sonarr event names are accepted but ignored unless added to the event map.
 
 Sonarr sends its native JSON payload. The bot reads `eventType` (or `event`) and
@@ -224,6 +224,8 @@ The bot also supports interactive, manual script execution from Telegram:
 1. In Telegram, send `/actions` to the bot from the configured `TELEGRAM_CHAT_ID`.
 2. Pick an action from the inline keyboard.
 3. Wait for completion output (stdout/stderr summary is posted back in chat).
+4. Manual actions reuse the same shared service config as the webhook scripts (`PLEX_URL`,
+   `PLEX_TOKEN_FILE`, `shared.services.*.url`, and mounted Kometa asset paths when needed).
 
 Default manual actions:
 

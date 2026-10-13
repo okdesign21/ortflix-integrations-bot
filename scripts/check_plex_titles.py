@@ -3,12 +3,12 @@
 
 Credentials (first match wins for URL / token):
 
-- Process environment (for example KOMETA_PLEXURL and KOMETA_PLEXTOKEN).
+- Shared bot environment (`PLEX_URL`, `PLEX_TOKEN_FILE`, `PLEX_TOKEN`).
 - Optional .env next to this script; only fills unset vars.
 - Values may be literals, a file path, or `sudo cat /path/to/secret` on this machine.
 
-If KOMETA_PLEXURL is unset but ORTFLIX_SYNC_HOST is set, URL defaults to
-http://ORTFLIX_SYNC_HOST:32400 (port: KOMETA_PLEX_PORT).
+Set `shared.plex.url` in the config file or `PLEX_URL` in the environment when
+the bot cannot reach Plex at the default address.
 
 Usage:
     python3 scripts/check_plex_titles.py
@@ -21,13 +21,11 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import subprocess
 from argparse import ArgumentParser
 from pathlib import Path
 from typing import Any
 
-from integration_utils import load_bot_settings
+from integration_utils import load_bot_settings, resolve_plex_token, resolve_plex_url
 from plexapi.server import PlexServer
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -62,56 +60,20 @@ def _load_simple_dotenv(path: Path) -> None:
             os.environ[key] = value
 
 
-def _try_resolve_secret(raw: str | None) -> str | None:
-    if raw is None:
-        return None
-    s = raw.strip()
-    if not s:
-        return None
-    m = re.match(r"^(?:sudo\s+)?cat\s+(.+)$", s, re.IGNORECASE)
-    if m:
-        path_str = m.group(1).strip().strip('"').strip("'")
-        path = Path(path_str).expanduser()
-        if path.is_file():
-            return path.read_text(encoding="utf-8").strip()
-        try:
-            r = subprocess.run(
-                ["sudo", "cat", str(path)],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if r.returncode == 0:
-                return r.stdout.strip()
-        except (FileNotFoundError, subprocess.SubprocessError, TimeoutError):
-            pass
-        return None
-    expanded = Path(s).expanduser()
-    if expanded.is_file():
-        return expanded.read_text(encoding="utf-8").strip()
-    return s
-
-
 def load_plex_config() -> tuple[str, str]:
-    url = _try_resolve_secret(os.getenv("KOMETA_PLEXURL"))
-    if not url:
-        host = os.getenv("ORTFLIX_SYNC_HOST", "").strip()
-        if host:
-            port = os.getenv("KOMETA_PLEX_PORT", "32400").strip() or "32400"
-            url = f"http://{host}:{port}"
-
-    token = _try_resolve_secret(os.getenv("KOMETA_PLEXTOKEN"))
+    shared_plex = BOT_SETTINGS["shared"]["plex"]
+    url = resolve_plex_url(str(shared_plex["url"]))
+    token = resolve_plex_token(str(shared_plex["token_file"]))
 
     if not url or not token:
         lines = []
         if not url:
             lines.append(
-                "Plex URL: set KOMETA_PLEXURL, or ORTFLIX_SYNC_HOST (uses http://HOST:32400)."
+                "Plex URL: set PLEX_URL or override shared.plex.url in the config file."
             )
         if not token:
             lines.append(
-                "Plex token: set KOMETA_PLEXTOKEN (literal, file path, or "
-                "sudo cat on this machine)."
+                "Plex token: set PLEX_TOKEN_FILE or PLEX_TOKEN."
             )
         print("Error:\n" + "\n".join(f"  {x}" for x in lines))
         raise SystemExit(1)
