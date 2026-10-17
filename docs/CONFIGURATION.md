@@ -102,6 +102,35 @@ Controls watched and triage tag suffixes. `letterboxd_users` is a list of Plex
 usernames eligible for Letterboxd logging; use an environment override when the list
 is deployment-specific.
 
+#### User map
+
+Watched tags use the Plex username, requested tags the Overseerr one. `user_map.json`
+maps each Plex username to the tag name for that person so both match:
+
+```json
+{"users": {"chen": {"tag": "chencoh2", "manual": true}}}
+```
+
+- `"manual": true` locks an entry; automatic sync never changes it.
+- `"nickname"` is an optional label for humans; nothing uses it yet.
+- When a user is not in the map, the bot matches them to Overseerr (Plex username or
+  email, via Tautulli) and adds them as an automatic entry. This needs `TAUTULLI_URL`
+  and `TAUTULLI_API_KEY`; without them the user's own name is used and nothing is saved.
+- The file lives in `$ORTFLIX_USER_MAP_DIR`, else `/config` when mounted, else `config/`.
+
+Manage it with `scripts/map_users.py` (also available as Telegram manual actions):
+
+```
+python scripts/map_users.py show
+python scripts/map_users.py sync [--apply]
+python scripts/map_users.py set PLEX TAG [--apply]
+python scripts/map_users.py nickname PLEX [NAME] [--apply]
+python scripts/map_users.py remove PLEX [--apply]
+```
+
+Changes are a dry run unless `--apply` is given. Changing the map affects future tags
+only; existing Radarr/Sonarr tags are not renamed.
+
 ### `plex_title_check`
 
 Controls the default Kometa asset directory, exception mapping file, Plex libraries,

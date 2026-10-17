@@ -40,7 +40,6 @@ from datetime import datetime
 from urllib.parse import quote_plus, urlencode
 
 from integration_utils import (
-    _clean_username,
     _env,
     add_tags_to_movie,
     discord_post,
@@ -52,6 +51,7 @@ from integration_utils import (
     radarr_base_url,
     radarr_session,
 )
+from user_map import resolve_user
 
 # ====== CONFIG ======
 BOT_SETTINGS = load_bot_settings()
@@ -139,9 +139,8 @@ def main():
         fail("Matched Radarr movie missing 'id'.")
 
     username = args.username or "unknown"
-    cleaned = _clean_username(username)
-    # Default to "unknown" if username has no valid chars (e.g., Japanese)
-    watched_tag_label = f"{cleaned or 'unknown'}-{WATCHED_TAG_SUFFIX}"
+    # Falls back to "unknown" if username has no valid chars (e.g., Japanese)
+    watched_tag_label = f"{resolve_user(username)}-{WATCHED_TAG_SUFFIX}"
 
     try:
         watched_id = ensure_tag(s, radarr_url, watched_tag_label)

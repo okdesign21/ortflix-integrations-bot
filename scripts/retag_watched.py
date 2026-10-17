@@ -23,7 +23,6 @@ from collections import defaultdict
 
 import requests
 from integration_utils import (
-    _clean_username,
     fail,
     load_bot_settings,
     radarr_base_url,
@@ -32,6 +31,7 @@ from integration_utils import (
     sonarr_session,
 )
 from retag_requesters import bulk_edit, ensure_tag_id, get_json
+from user_map import resolve_user
 
 HISTORY_PAGE_SIZE = 1000
 
@@ -61,8 +61,8 @@ APPS = {
 }
 
 
-def watched_label(username: str, suffix: str) -> str:
-    return f"{_clean_username(username) or 'unknown'}-{suffix}"
+def watched_label(username: str, suffix: str, persist: bool) -> str:
+    return f"{resolve_user(username, persist=persist)}-{suffix}"
 
 
 def tautulli_call(base: str, key: str, cmd: str, **params):
@@ -129,11 +129,13 @@ def users_by_external_id(t_base, t_key, cfg) -> dict[int, set]:
     return users_by_external
 
 
-def plan_tags(items, users_by_external, label_ids, suffix, id_field) -> dict[str, list[int]]:
+def plan_tags(
+    items, users_by_external, label_ids, suffix, id_field, persist=False
+) -> dict[str, list[int]]:
     to_tag: dict[str, list[int]] = defaultdict(list)
     for item in items:
         for user in users_by_external.get(item.get(id_field), ()):
-            label = watched_label(user, suffix)
+            label = watched_label(user, suffix, persist)
             if label_ids.get(label) not in item.get("tags", []):
                 to_tag[label].append(item["id"])
     return to_tag
@@ -145,7 +147,7 @@ def backfill_app(name, cfg, t_base, t_key, suffix, triage_label, apply: bool) ->
     users = users_by_external_id(t_base, t_key, cfg)
     label_ids = {t["label"]: t["id"] for t in get_json(session, base, "/api/v3/tag")}
     items = get_json(session, base, cfg["list_path"])
-    to_tag = plan_tags(items, users, label_ids, suffix, cfg["item_id_field"])
+    to_tag = plan_tags(items, users, label_ids, suffix, cfg["item_id_field"], apply)
 
     triage_ids: set[int] = set()
     for label, ids in sorted(to_tag.items()):
