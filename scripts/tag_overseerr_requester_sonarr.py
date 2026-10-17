@@ -3,7 +3,8 @@
 tag_overseerr_requester_sonarr.py — Tag a Sonarr series with who requested it in Overseerr.
 
 On import or upgrade, looks up the matching Overseerr request and tags the
-series in Sonarr with "{requester}-requested" and "overseer".
+series in Sonarr with "{requester}-requested" and "overseer". With no matching request
+it only adds "okdesign-requested" (the "overseer" tag is for Overseerr requests only).
 
 ── Trigger setup (webhook via integrations-bot) ──────────────────────────────
 One single webhook in Sonarr covers all scripts — the bot dispatches by event.
@@ -31,6 +32,7 @@ import os
 import sys
 
 from integration_utils import (
+    DEFAULT_REQUESTER_LABEL,
     _env,
     add_tags_to_series,
     ensure_tag,
@@ -112,12 +114,13 @@ def main() -> None:
         fail(f"Overseerr lookup failed: {e}")
 
     user = req.get("requestedBy") if req else None
-    tag_label = requester_tag_from_user(user)
+    tag_label = requester_tag_from_user(user) if req else DEFAULT_REQUESTER_LABEL
 
     try:
-        tag_id = ensure_tag(s_session, sonarr_url, tag_label)
-        overseer_id = ensure_tag(s_session, sonarr_url, SOURCE_TAG_LABEL)
-        add_tags_to_series(s_session, sonarr_url, int(series_id), [tag_id, overseer_id])
+        tag_ids = [ensure_tag(s_session, sonarr_url, tag_label)]
+        if req:
+            tag_ids.append(ensure_tag(s_session, sonarr_url, SOURCE_TAG_LABEL))
+        add_tags_to_series(s_session, sonarr_url, int(series_id), tag_ids)
     except Exception as e:
         fail(f"Applying tags failed: {e}")
 
@@ -129,9 +132,10 @@ def main() -> None:
         if user
         else "unknown"
     )
+    applied = [tag_label, SOURCE_TAG_LABEL] if req else [tag_label]
     print(
         f"[Sonarr] Tagged '{series.get('title')}' ({series.get('year')}) "
-        f"with ['{tag_label}', '{SOURCE_TAG_LABEL}'] "
+        f"with {applied} "
         f"(id={series_id}, requester={requester_display})"
     )
 

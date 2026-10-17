@@ -191,6 +191,10 @@ def _clean_username(name: Optional[str]) -> Optional[str]:
     return cleaned
 
 
+# Tag for items with no Overseerr request (pre-Overseerr or manually added).
+DEFAULT_REQUESTER_LABEL = "okdesign-requested"
+
+
 def requester_tag_from_user(user: Optional[dict]) -> str:
     """Build a stable requester tag with username/displayName/email defaults."""
     if not user:
