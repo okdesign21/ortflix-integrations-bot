@@ -226,6 +226,24 @@ dependency log sinks must apply equivalent sanitization. Do not print real token
 or raw production request logs to test logging. Existing historical logs are not
 rewritten, and deploying this fix does not automatically rotate credentials.
 
+## Script lifecycle
+
+Automatic and Telegram-triggered scripts share timeout and cancellation cleanup.
+After a timeout or cancellation, the bot requests termination, allows up to five
+seconds for graceful shutdown, then force-stops remaining work and reaps the child
+before returning the timeout or propagating cancellation.
+
+On Linux/POSIX, scripts start in a separate session and cleanup signals their
+process group, including media tools that remain in that group. Detached processes
+that create their own session are not covered. On Windows, cleanup stops and reaps
+the direct child only; descendant cleanup is not guaranteed. The native POSIX
+process-group integration test runs on Linux CI and is skipped on Windows.
+
+Timeouts still use `RADARR_SCRIPT_TIMEOUT`, `SONARR_SCRIPT_TIMEOUT`,
+`TAUTULLI_SCRIPT_TIMEOUT` or `MANUAL_ACTION_TIMEOUT`, as appropriate. The extra
+cleanup grace period is separate from those execution limits. Output-memory limits
+and concurrency control are separate concerns, not provided by timeout cleanup.
+
 ## Validation checklist
 
 After changing configuration:

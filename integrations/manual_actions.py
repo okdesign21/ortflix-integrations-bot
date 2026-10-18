@@ -9,6 +9,8 @@ from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from .script_runner import communicate_with_timeout
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 
@@ -91,10 +93,9 @@ async def run_manual_action(action_id: str) -> tuple[bool, str]:
             env=os.environ.copy(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=os.name == "posix",
         )
-        stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(), timeout=MANUAL_ACTION_TIMEOUT
-        )
+        stdout_b, stderr_b = await communicate_with_timeout(proc, MANUAL_ACTION_TIMEOUT)
     except asyncio.TimeoutError:
         return False, (
             f"`{action['label']}` timed out after {MANUAL_ACTION_TIMEOUT}s. "
