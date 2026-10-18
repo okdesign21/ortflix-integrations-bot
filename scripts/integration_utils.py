@@ -11,16 +11,23 @@ import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import NoReturn, Optional
 
 import requests
 import yaml
+
+from integrations.secret_config import SECRET_NAMES, load_secret
 
 
 # ====== Common Helpers ======
 def _env(name, required=False, default=None):
     """Get environment variable, exit if required but missing."""
-    v = os.getenv(name, default)
+    try:
+        v = load_secret(name) if name in SECRET_NAMES else os.getenv(name, default)
+    except ValueError as error:
+        fail(str(error))
+    if v is None:
+        v = default
     if required and not v:
         print(f"[ERROR] Missing env var: {name}", file=sys.stderr)
         sys.exit(2)
@@ -95,7 +102,9 @@ def resolve_plex_url(default: str) -> str:
 
 def resolve_plex_token(default_token_file: str) -> str:
     """Resolve Plex token from env override or configured token file."""
-    token_file = (os.getenv("PLEX_TOKEN_FILE") or default_token_file or "").strip()
+    if "PLEX_TOKEN_FILE" in os.environ:
+        return _env("PLEX_TOKEN") or ""
+    token_file = (default_token_file or "").strip()
     if token_file:
         path = Path(token_file).expanduser()
         if path.is_file():
@@ -166,7 +175,7 @@ def load_bot_settings() -> dict:
     return settings
 
 
-def fail(msg, code=1):
+def fail(msg, code=1) -> NoReturn:
     """Print error and exit."""
     print(f"[ERROR] {msg}", file=sys.stderr)
     sys.exit(code)
@@ -288,8 +297,9 @@ def overseerr_api_key() -> str:
     Resolution order:
     1) OVERSEERR_API_KEY
     2) SEERR_API_KEY
+    3) API_KEY
     """
-    key = os.getenv("OVERSEERR_API_KEY") or os.getenv("SEERR_API_KEY")
+    key = _env("OVERSEERR_API_KEY") or _env("SEERR_API_KEY") or _env("API_KEY")
     if not key:
         fail("Missing OVERSEERR_API_KEY or SEERR_API_KEY in environment")
     return key
@@ -510,26 +520,26 @@ def add_tags_to_series(s: requests.Session, base: str, series_id: int, tag_ids: 
 
 
 # ====== Discord ======
-def discord_post(content: str, webhook_url: str = None) -> None:
+def discord_post(content: str, webhook_url: str | None = None) -> None:
     """Post a message to Discord via webhook (optional)."""
-    webhook_url = webhook_url or os.getenv("DISCORD_WEBHOOK_URL")
+    webhook_url = webhook_url or _env("DISCORD_WEBHOOK_URL")
     if not webhook_url:
         return
     try:
         r = requests.post(webhook_url, json={"content": content}, timeout=10)
         if r.status_code != 204:
             print(
-                f"[WARN] Discord send failed: {r.status_code} - {r.text}",
+                f"[WARN] Discord send failed: HTTP {r.status_code}",
                 file=sys.stderr,
             )
-    except Exception as e:
-        print(f"[WARN] Discord exception: {e}", file=sys.stderr)
+    except Exception:
+        print("[WARN] Discord request failed; check connectivity and credentials", file=sys.stderr)
 
 
 # ====== Telegram ======
 def telegram_post(text: str) -> None:
     """Post a message to Telegram if bot token and chat id are available."""
-    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    token = _env("TELEGRAM_BOT_TOKEN") or _env("TELEGRAM_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         return
@@ -540,6 +550,6 @@ def telegram_post(text: str) -> None:
             timeout=10,
         )
         if not r.ok:
-            print(f"[WARN] Telegram send failed: {r.status_code} - {r.text}", file=sys.stderr)
-    except Exception as e:
-        print(f"[WARN] Telegram exception: {e}", file=sys.stderr)
+            print(f"[WARN] Telegram send failed: HTTP {r.status_code}", file=sys.stderr)
+    except Exception:
+        print("[WARN] Telegram request failed; check connectivity and credentials", file=sys.stderr)

@@ -5,6 +5,7 @@ Handles webhooks and callback queries using extensible handler registry.
 
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
 from typing import Optional, cast
@@ -44,13 +45,39 @@ from integrations.tautulli_automation import (
 )
 from integrations.tautulli_automation import router as tautulli_router
 
+
 # === LOGGING ===
-log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, log_level, logging.INFO),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+class _TelegramTokenRedactingFormatter(logging.Formatter):
+    """Sanitize rendered messages and tracebacks without changing the log layout."""
+
+    def __init__(self, formatter: logging.Formatter) -> None:
+        super().__init__()
+        self._formatter = formatter
+
+    def format(self, record: logging.LogRecord) -> str:
+        text = self._formatter.format(record)
+        if TELEGRAM_TOKEN:
+            text = text.replace(TELEGRAM_TOKEN, "[REDACTED]")
+        return re.sub(r"(/bot)\d+:[^/\s\"'<>]+", r"\1[REDACTED]", text, flags=re.IGNORECASE)
+
+
+def _configure_logging() -> None:
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    for handler in logging.getLogger().handlers:
+        if not isinstance(handler.formatter, _TelegramTokenRedactingFormatter):
+            handler.setFormatter(
+                _TelegramTokenRedactingFormatter(handler.formatter or logging.Formatter())
+            )
+    for name in ("httpx", "httpcore", "telegram"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 # === GLOBAL STATE ===

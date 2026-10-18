@@ -19,6 +19,7 @@ Personal or deployment-specific settings should go in one of these override file
 | `/config/bot_settings.yaml` | Preferred Docker Compose or Kubernetes mounted configuration path. |
 | `/config/bot_settings.yml` | Same as above, YAML extension alternative. |
 | `ORTFLIX_BOT_SETTINGS_FILE` | Explicit path; takes precedence over automatic candidates. |
+
 ## Precedence
 
 The loader deep-merges settings in this order:
@@ -130,6 +131,74 @@ defaults where implemented.
 
 ## Docker and Kubernetes
 
+### Secret files
+
+The following credentials accept UTF-8 secret files. Leading and trailing
+whitespace (including a final newline) is removed from file contents.
+
+| File setting | Environment fallback | Used for |
+| --- | --- | --- |
+| `TELEGRAM_TOKEN_FILE` | `TELEGRAM_TOKEN` | Main Telegram bot and script notifications |
+| `OVERSEERR_API_KEY_FILE` | `OVERSEERR_API_KEY` | Seerr/Overseerr API access |
+| `RADARR_API_KEY_FILE` | `RADARR_API_KEY` | Radarr enrichment and automation scripts |
+| `SONARR_API_KEY_FILE` | `SONARR_API_KEY` | Sonarr automation scripts |
+| `WEBHOOK_TOKEN_FILE` | `WEBHOOK_TOKEN` | Incoming webhook authentication |
+| `PLEX_TOKEN_FILE` | `PLEX_TOKEN` | Plex manual actions and audio-language scripts |
+| `DISCORD_WEBHOOK_URL_FILE` | `DISCORD_WEBHOOK_URL` | Optional Discord notifications |
+| `API_KEY_FILE` | `API_KEY` | Legacy main-bot Overseerr key alias; also accepted by scripts |
+| `SEERR_API_KEY_FILE` | `SEERR_API_KEY` | Script-only Overseerr key alias |
+| `TELEGRAM_BOT_TOKEN_FILE` | `TELEGRAM_BOT_TOKEN` | Script-only Telegram token alias |
+
+Precedence and failures:
+
+1. If a credential's `*_FILE` variable is set, that file is authoritative, even
+  when the corresponding environment value is also set. An empty path, missing
+  or unreadable file, invalid UTF-8, or whitespace-only contents is an error.
+  There is no environment fallback after a configured-file error.
+2. Otherwise the existing environment value is used unchanged. No file settings
+  are required for existing environment-only deployments.
+3. Alias order remains main bot: `OVERSEERR_API_KEY` then `API_KEY`; automation
+  scripts: `OVERSEERR_API_KEY`, `SEERR_API_KEY`, then `API_KEY`. Script Telegram
+  notifications prefer `TELEGRAM_BOT_TOKEN` over `TELEGRAM_TOKEN`. Each name uses
+  its own file-before-environment rule, so a canonical environment value can
+  outrank an alias file.
+4. Plex retains its existing default `shared.plex.token_file` lookup before
+  `PLEX_TOKEN` when `PLEX_TOKEN_FILE` is unset. A missing default file permits
+  the environment fallback; an explicitly configured file does not.
+
+All explicitly configured supported secret files are checked during bot startup,
+including optional and shadowed aliases. Errors identify the setting without
+including its path or secret contents. Scripts read their files when invoked.
+Secret changes require a bot restart; credentials are not hot-reloaded.
+`TELEGRAM_CHAT_ID` remains a regular environment setting, not a secret credential.
+
+An environment `WEBHOOK_TOKEN` containing only whitespace is rejected at startup,
+even when `ALLOW_INSECURE_WEBHOOKS=true`. An absent or empty environment token is
+allowed only with that explicit insecure-mode override. Configured secret files
+must always be readable and non-empty; insecure mode does not bypass file errors.
+
+For a locally built image, mount a directory containing the required secret files
+read-only (the files must be readable by the container user):
+
+```bash
+docker build -t ortflix-bot-addons .
+docker run --rm -p 7777:7777 \
+  --mount type=bind,src="$(pwd)/secrets",dst=/run/secrets,readonly \
+  -e TELEGRAM_TOKEN_FILE=/run/secrets/telegram_token \
+  -e OVERSEERR_API_KEY_FILE=/run/secrets/overseerr_api_key \
+  -e WEBHOOK_TOKEN_FILE=/run/secrets/webhook_token \
+  -e TELEGRAM_CHAT_ID=12345 \
+  ortflix-bot-addons
+```
+
+Create the files privately before running the container; never commit them. Docker
+Compose or Swarm secrets can mount the same files at `/run/secrets/<secret-name>`.
+Kubernetes Secret volumes work the same way: set each `*_FILE` variable to its
+mounted file path. Use an image containing this feature before changing deployment
+settings. This change does not migrate the Ortflix Compose configuration.
+
+### Bot settings mount
+
 Mount the operator override at `/config/bot_settings.yaml`:
 
 ```yaml
@@ -142,6 +211,20 @@ services:
 For Kubernetes, mount a ConfigMap at `/config/bot_settings.yaml` and keep
 tokens/API keys in Secrets. The bot reads the mounted file when each automation script
 starts.
+
+## Logging
+
+`LOG_LEVEL` controls application diagnostics. HTTPX, HTTPcore and Telegram loggers
+stay at `WARNING` to avoid verbose credential-bearing request logs, including when
+the application uses `DEBUG`. Root logging handlers present at bot startup redact
+the configured Telegram token and Telegram Bot API token paths in rendered
+messages and tracebacks while preserving their existing log format.
+
+This is Telegram-token protection, not general sanitization of every API response
+or script output. Deployments adding logging handlers after startup or separate
+dependency log sinks must apply equivalent sanitization. Do not print real tokens
+or raw production request logs to test logging. Existing historical logs are not
+rewritten, and deploying this fix does not automatically rotate credentials.
 
 ## Validation checklist
 

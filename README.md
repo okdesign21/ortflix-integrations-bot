@@ -83,6 +83,12 @@ Use the settings file for larger data and shared defaults such as media folders,
 
 Environment variables remain supported for runtime wiring, secrets, and targeted overrides. For large static script settings, prefer `bot_settings.yaml` instead of expanding `.env`.
 
+Credentials also accept `*_FILE` settings for mounted Docker/Kubernetes secrets.
+An explicitly set file takes precedence over the matching environment value;
+invalid or empty files fail startup rather than falling back. See
+[secret files and container examples](docs/CONFIGURATION.md#secret-files) for the
+supported variables, alias precedence, and mount requirements.
+
 ### Core
 
 | Variable | Required | Default | Description |

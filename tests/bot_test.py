@@ -1,14 +1,99 @@
 """Basic tests for the telegram bot."""
 
+import io
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, ConnectError, MockTransport, Response
+from telegram import Bot
+from telegram.error import NetworkError
+from telegram.request import HTTPXRequest
 
 # Ensure fixtures from conf_test.py are discovered
 pytest_plugins = ["conf_test"]
 
 TEST_WEBHOOK_HEADERS = {"x-webhook-token": "test_webhook_token_123"}
+
+
+@pytest.fixture(params=["INFO", "DEBUG"])
+def secured_logging(request, monkeypatch):
+    import bot as bot_module
+
+    stream = io.StringIO()
+    root = logging.getLogger()
+    monkeypatch.setenv("LOG_LEVEL", request.param)
+    monkeypatch.setattr(root, "level", getattr(logging, request.param))
+    monkeypatch.setattr(root, "handlers", [logging.StreamHandler(stream)])
+    for name in ("httpx", "httpcore", "telegram"):
+        monkeypatch.setattr(logging.getLogger(name), "level", logging.NOTSET)
+    bot_module._configure_logging()
+    return bot_module, stream
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("request_fails", [False, True])
+async def test_telegram_request_logs_do_not_expose_token(
+    secured_logging, request_fails, monkeypatch
+):
+    bot_module, stream = secured_logging
+    token = "123456:audit-synthetic-token"
+    monkeypatch.setattr(bot_module, "TELEGRAM_TOKEN", token)
+
+    def reply(request):
+        if request_fails:
+            raise ConnectError("Synthetic connection failure", request=request)
+        return Response(
+            200,
+            json={
+                "ok": True,
+                "result": {
+                    "id": 123456,
+                    "is_bot": True,
+                    "first_name": "Audit",
+                    "username": "audit_bot",
+                },
+            },
+        )
+
+    transport = HTTPXRequest(httpx_kwargs={"transport": MockTransport(reply)})
+    updates = HTTPXRequest(httpx_kwargs={"transport": MockTransport(reply)})
+    telegram_bot = Bot(token=token, request=transport, get_updates_request=updates)
+    try:
+        if request_fails:
+            with pytest.raises(NetworkError):
+                await telegram_bot.get_me()
+        else:
+            await telegram_bot.get_me()
+    finally:
+        await transport.shutdown()
+        await updates.shutdown()
+
+    bot_module.logger.info("Operator diagnostics remain available")
+    text = stream.getvalue()
+    assert "Operator diagnostics remain available" in text
+    assert "HTTP Request" not in text
+    assert token not in text
+
+
+def test_log_formatter_redacts_tokens_in_messages_and_exceptions(secured_logging, monkeypatch):
+    bot_module, stream = secured_logging
+    token = "123456:audit-synthetic-token"
+    other_token = "987654:another-synthetic-token"
+    monkeypatch.setattr(bot_module, "TELEGRAM_TOKEN", token)
+    try:
+        raise RuntimeError(f"Request failed at https://api.telegram.org/bot{token}/getMe")
+    except RuntimeError:
+        bot_module.logger.exception("Request failed with token %s", token)
+
+    dependency_logger = logging.getLogger("httpx")
+    monkeypatch.setattr(dependency_logger, "level", logging.DEBUG)
+    dependency_logger.debug("HTTP Request: https://api.telegram.org/bot%s/getMe", other_token)
+    text = stream.getvalue()
+    assert "RuntimeError" in text
+    assert "[REDACTED]" in text
+    assert token not in text
+    assert other_token not in text
 
 
 @pytest.mark.asyncio

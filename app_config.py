@@ -10,6 +10,8 @@ from typing import Callable, Optional
 
 import yaml
 
+from integrations.secret_config import load_secret, validate_secret_files
+
 
 def _env_bool(name: str, default: bool = False) -> bool:
     """Parse boolean env var from common truthy values."""
@@ -123,21 +125,24 @@ def _get_service_url(
 
 
 # Service URLs (for both bot and script usage)
-OVERSEERR_URL = _get_service_url("OVERSEERR_URL", "overseerr", "overseerr", 5055, legacy_env_var="SEERR_URL")
+OVERSEERR_URL = _get_service_url(
+    "OVERSEERR_URL", "overseerr", "overseerr", 5055, legacy_env_var="SEERR_URL"
+)
 RADARR_URL = _get_service_url("RADARR_URL", "radarr", "radarr", 7878)
 SONARR_URL = _get_service_url("SONARR_URL", "sonarr", "sonarr", 8989)
 
 # API Keys
-OVERSEERR_API_KEY = os.getenv("OVERSEERR_API_KEY") or os.getenv("API_KEY")
-RADARR_API_KEY = os.getenv("RADARR_API_KEY")
-SONARR_API_KEY = os.getenv("SONARR_API_KEY")
+validate_secret_files()
+OVERSEERR_API_KEY = load_secret("OVERSEERR_API_KEY") or load_secret("API_KEY")
+RADARR_API_KEY = load_secret("RADARR_API_KEY")
+SONARR_API_KEY = load_secret("SONARR_API_KEY")
 
 # Telegram
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN = load_secret("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID_RAW = os.getenv("TELEGRAM_CHAT_ID")
 WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", 7777))
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "0.0.0.0")  # nosec B104
-WEBHOOK_TOKEN = os.getenv("WEBHOOK_TOKEN")
+WEBHOOK_TOKEN = load_secret("WEBHOOK_TOKEN")
 ALLOW_INSECURE_WEBHOOKS = _env_bool("ALLOW_INSECURE_WEBHOOKS", default=False)
 TELEGRAM_PORT = WEBHOOK_PORT
 TELEGRAM_HOST = WEBHOOK_HOST
@@ -384,6 +389,9 @@ def validate_config() -> None:
         int(TELEGRAM_CHAT_ID_RAW)
     except (TypeError, ValueError) as err:
         raise ValueError("TELEGRAM_CHAT_ID must be an integer") from err
+
+    if WEBHOOK_TOKEN and not WEBHOOK_TOKEN.strip():
+        raise ValueError("WEBHOOK_TOKEN must not contain only whitespace")
 
     if not WEBHOOK_TOKEN and not ALLOW_INSECURE_WEBHOOKS:
         raise ValueError(
