@@ -14,12 +14,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Require tag higher than all existing versions
+        run: |
+          new="${GITHUB_REF_NAME}"
+          highest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -vx "$new" | sort -V | tail -n1 || true)
+          if [ -n "$highest" ] && [ "$(printf '%s\n%s\n' "$highest" "$new" | sort -V | tail -n1)" != "$new" ]; then
+            echo "::error::$new is not higher than existing tag $highest"
+            exit 1
+          fi
+
   lint:
+    needs: check-version
     uses: ./.github/workflows/lint.yml
     permissions:
       contents: read
 
   security:
+    needs: check-version
     uses: ./.github/workflows/security.yml
     permissions:
       contents: read
@@ -75,6 +92,7 @@ jobs:
           context: .
           file: ./dockerfile
           push: true
+          build-args: APP_VERSION=${{ steps.meta.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 

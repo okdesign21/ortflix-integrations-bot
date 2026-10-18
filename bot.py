@@ -6,6 +6,7 @@ Handles webhooks and callback queries using extensible handler registry.
 import logging
 import os
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 from typing import Optional, cast
 
 import uvicorn
@@ -119,10 +120,15 @@ async def lifespan(app: FastAPI):
 
 
 # === FASTAPI APP ===
+try:
+    APP_VERSION = version("ortflix-integrations")
+except PackageNotFoundError:
+    APP_VERSION = "0.0.0+unknown"
+
 app = FastAPI(
     title="Ortflix Integrations API",
     description="REST API for handling Overseerr, Radarr, and media integrity webhooks",
-    version="2.0.0",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 app.include_router(overseerr_router)

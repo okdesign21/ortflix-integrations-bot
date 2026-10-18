@@ -15,6 +15,10 @@ COPY config ./config
 COPY integrations ./integrations
 COPY scripts ./scripts
 
+# The image has no .git, so setuptools-scm needs the version passed in
+ARG APP_VERSION=0.0.0
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${APP_VERSION}
+
 # Install build dependencies and package
 RUN pip install --no-cache-dir --upgrade pip==24.3.1 setuptools==75.6.0 wheel==0.45.1 && \
     pip install --no-cache-dir .
