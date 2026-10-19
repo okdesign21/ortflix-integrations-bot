@@ -9,7 +9,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-MAX_DETAILS = 30
+MAX_VULNERABILITY_DETAILS = 500
+MAX_SECRET_DETAILS = 30
 _SAFE_TEXT = re.compile(r"[^A-Za-z0-9_.+:@/-]")
 
 
@@ -77,11 +78,14 @@ def _render_findings(
         f"HIGH/CRITICAL secret findings: {len(secrets)} (matched values and source text omitted)",
     ]
     if vulnerabilities:
+        summary.append(
+            f"Distinct vulnerability IDs: {len({finding[1] for finding in vulnerabilities})}"
+        )
         summary.append("### Vulnerabilities")
         summary.extend(
             f"- {severity} {vulnerability_id}: {package} {installed} -> {fixed}"
             for severity, vulnerability_id, package, installed, fixed in vulnerabilities[
-                :MAX_DETAILS
+                :MAX_VULNERABILITY_DETAILS
             ]
         )
     if secrets:
@@ -89,13 +93,13 @@ def _render_findings(
         summary.extend(
             f"- {severity} rule={rule_id} category={category} at {target}"
             f"{f':{line}' if line else ''}"
-            for severity, rule_id, category, target, line in secrets[:MAX_DETAILS]
+            for severity, rule_id, category, target, line in secrets[:MAX_SECRET_DETAILS]
         )
     omitted = (
         len(vulnerabilities)
         + len(secrets)
-        - min(len(vulnerabilities), MAX_DETAILS)
-        - min(len(secrets), MAX_DETAILS)
+        - min(len(vulnerabilities), MAX_VULNERABILITY_DETAILS)
+        - min(len(secrets), MAX_SECRET_DETAILS)
     )
     if omitted:
         summary.append(f"Additional findings omitted from summary: {omitted}")

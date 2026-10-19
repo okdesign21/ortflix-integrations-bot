@@ -293,6 +293,42 @@ def test_trivy_summary_shows_vulnerability_metadata_but_not_payloads(tmp_path):
     assert secret_marker not in summary
 
 
+def test_trivy_summary_includes_complete_current_sized_inventory(tmp_path):
+    report = tmp_path / "trivy.json"
+    findings = [
+        {
+            "Severity": "HIGH",
+            "VulnerabilityID": "CVE-2026-12345",
+            "PkgName": f"package-{index:03}",
+            "InstalledVersion": "1.0",
+        }
+        for index in range(213)
+    ]
+    report.write_text(json.dumps({"Results": [{"Vulnerabilities": findings}]}), encoding="utf-8")
+    summary = summarize_report(report, "image", "failure")
+    assert "vulnerability findings: 213" in summary
+    assert "Distinct vulnerability IDs: 1" in summary
+    assert "package-212" in summary
+    assert "Additional findings omitted" not in summary
+
+
+def test_trivy_summary_bounds_large_inventory_and_secret_details(tmp_path):
+    report = tmp_path / "trivy.json"
+    vulnerability = {"Severity": "HIGH", "VulnerabilityID": "CVE-2026-12345"}
+    secret = {"Severity": "HIGH", "RuleID": "generic-api-key", "Match": "never-print-marker"}
+    report.write_text(
+        json.dumps(
+            {"Results": [{"Vulnerabilities": [vulnerability] * 501, "Secrets": [secret] * 31}]}
+        ),
+        encoding="utf-8",
+    )
+    summary = summarize_report(report, "image", "failure")
+    assert summary.count("- HIGH CVE-2026-12345") == 500
+    assert summary.count("rule=generic-api-key") == 30
+    assert "Additional findings omitted from summary: 2" in summary
+    assert "never-print-marker" not in summary
+
+
 def test_trivy_summary_reports_unavailable_or_empty_reports_safely(tmp_path):
     missing = summarize_report(tmp_path / "missing.json", "image", "failure")
     assert "Report unavailable or invalid" in missing

@@ -59,6 +59,31 @@ def env_keyword_set(name: str, default_csv: str) -> set[str]:
     return {part.lower() for part in env_csv_list(name, default_csv)}
 
 
+def validate_media_path(raw_path: str, roots: list[str], extensions: set[str]) -> str:
+    """Resolve an existing media file within explicitly approved library roots."""
+    try:
+        path = Path(raw_path)
+        if not raw_path or not path.is_absolute() or ".." in path.parts:
+            raise ValueError("Media path must be absolute and contain no traversal")
+        if not isinstance(roots, list) or not roots:
+            raise ValueError("Configure at least one allowed media root")
+        allowed_roots = []
+        for root in roots:
+            if not isinstance(root, str) or not root or not Path(root).is_absolute():
+                raise ValueError("Allowed media roots must be absolute paths")
+            allowed_roots.append(Path(root).resolve())
+        resolved = path.resolve(strict=True)
+        if not any(resolved.is_relative_to(root) for root in allowed_roots):
+            raise ValueError("Media path is outside allowed media roots")
+        if not resolved.is_file() or not os.access(resolved, os.R_OK):
+            raise ValueError("Media path must be a readable regular file")
+        if resolved.suffix.lower().lstrip(".") not in extensions:
+            raise ValueError("Media file extension is not supported")
+        return str(resolved)
+    except (OSError, RuntimeError):
+        raise ValueError("Media path cannot be resolved or accessed") from None
+
+
 def resolve_secret_reference(raw: str | None) -> str | None:
     """Resolve a literal secret, file path, or `sudo cat /path` reference."""
     if raw is None:

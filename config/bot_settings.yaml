@@ -55,6 +55,7 @@ audio_fix:
       - avi
 
   sonarr:
+    tv_dirs: []
     plex_section_id: "2"
     default_language: eng
     supported_extensions:

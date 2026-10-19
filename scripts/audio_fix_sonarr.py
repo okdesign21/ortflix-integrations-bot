@@ -36,11 +36,13 @@ import subprocess
 import sys
 
 from integration_utils import (
+    env_csv_list,
     env_str,
     load_bot_settings,
     resolve_plex_token,
     resolve_plex_url,
     telegram_post,
+    validate_media_path,
 )
 
 BOT_SETTINGS = load_bot_settings()
@@ -49,6 +51,7 @@ SONARR_SETUP = BOT_SETTINGS["audio_fix"]["sonarr"]
 LANG_MAP = SHARED_SETUP["audio_language_map"]
 LANG_NAME_MAP = SONARR_SETUP["language_name_map"]
 SUPPORTED_EXTENSIONS = set(SONARR_SETUP["supported_extensions"])
+TV_DIRS = env_csv_list("AUDIO_LANG_TV_DIRS", ",".join(SONARR_SETUP["tv_dirs"]))
 
 PLEX_URL = resolve_plex_url(str(SHARED_SETUP["plex"]["url"]))
 PLEX_TOKEN_FILE = env_str("PLEX_TOKEN_FILE", SHARED_SETUP["plex"]["token_file"])
@@ -188,17 +191,17 @@ def main() -> None:
         print(f"[audio_fix_sonarr] Skipping event type: {event!r}")
         sys.exit(0)
 
-    file_path = os.getenv("sonarr_episodefile_path", "")
-    if not file_path or not os.path.exists(file_path):
-        print(f"[audio_fix_sonarr] File not found: {file_path!r}")
+    try:
+        file_path = validate_media_path(
+            os.getenv("sonarr_episodefile_path", ""), TV_DIRS, SUPPORTED_EXTENSIONS
+        )
+    except ValueError as error:
+        print(f"[audio_fix_sonarr] {error}", file=sys.stderr)
         sys.exit(1)
 
     lang = _sonarr_language()
     ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
     ok = True
-    if ext not in SUPPORTED_EXTENSIONS:
-        print(f"[audio_fix_sonarr] Unsupported format: {ext!r}")
-        sys.exit(0)
 
     if ext == "mkv":
         ok = _fix_mkv(file_path, lang)

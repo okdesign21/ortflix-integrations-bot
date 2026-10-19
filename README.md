@@ -118,7 +118,8 @@ supported variables, alias precedence, and mount requirements.
 | `TAUTULLI_SCRIPT_TIMEOUT` | `180` | Tautulli automation script timeout |
 | `MANUAL_ACTION_TIMEOUT` | `600` | Timeout for Telegram-triggered manual scripts |
 | `MANUAL_ACTION_OUTPUT_LIMIT` | `3500` | Max output chars returned to Telegram |
-| `AUDIO_LANG_MOVIES_DIRS` | `/movies,/movies-hdr` | Bulk audio-language fixer; prefer `config/bot_settings.yaml` for shared defaults |
+| `AUDIO_LANG_MOVIES_DIRS` | `/movies,/movies-hdr` | Radarr bulk scan and allowed webhook roots; prefer `audio_fix.radarr.movies_dirs` in settings |
+| `AUDIO_LANG_TV_DIRS` | Empty (fail closed) | Allowed Sonarr webhook roots; configure `audio_fix.sonarr.tv_dirs` before processing episodes |
 | `PLEX_URL` | `shared.plex.url` | Shared Plex base URL for Telegram/manual actions and audio-language post-processing |
 | `PLEX_TOKEN_FILE` | `shared.plex.token_file` | Shared Plex token file (Docker compose) |
 | `PLEX_TOKEN` | - | Shared Plex token env fallback (k8s/manual runs) |

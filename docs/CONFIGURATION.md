@@ -76,7 +76,8 @@ override default service URLs for a deployment.
 
 Controls Radarr and Sonarr audio-language scripts:
 
-- `movies_dirs`: directories scanned by Radarr bulk mode.
+- `radarr.movies_dirs`: Radarr bulk scan directories and allowed webhook media roots.
+- `sonarr.tv_dirs`: allowed Sonarr webhook media roots; empty by default (fail closed).
 - `plex_section_id` under Radarr or Sonarr: Plex library section IDs.
 - `default_language`: fallback ISO-639-2 language code.
 - `skip_folders`: folder names skipped by Radarr bulk mode.
@@ -84,6 +85,31 @@ Controls Radarr and Sonarr audio-language scripts:
 - `language_name_map`: Sonarr language-name to ISO-code mapping.
 
 Prefer local overrides for media paths and skip lists.
+
+Webhook audio scripts require absolute, readable regular files with a supported
+extension inside a configured library root. Validation resolves symlinks, rejects
+traversal and outside-root targets, and passes the canonical path to media tools.
+Failures exit nonzero with a non-sensitive stderr message before probing, editing,
+or Plex analysis. Test events do not process files and still work without roots.
+
+Set roots using container-visible paths in your operator override, for example:
+
+```yaml
+audio_fix:
+  radarr:
+    movies_dirs: [/movies, /movies-hdr]
+  sonarr:
+    tv_dirs: [/tv, /tv-hdr]
+```
+
+Only include directories actually intended for this bot's media processing.
+`AUDIO_LANG_MOVIES_DIRS` and `AUDIO_LANG_TV_DIRS` provide comma-separated environment
+overrides. **Before enabling Sonarr audio processing, configure its TV roots**;
+the bundled empty list deliberately does not authorize a guessed deployment path.
+Mounts and ownership remain deployment controls. Path validation is not protection
+against concurrent filesystem replacement by another writer; do not grant
+untrusted processes write access to these roots. Radarr bulk mode retains its
+separate configured-directory scanning behavior; this guard covers webhook input.
 
 ### `hdr_routing`
 
@@ -341,7 +367,10 @@ artifacts or routine console output. An `always()` step reads each report and ad
 a sanitized summary to the GitHub step summary, even when the scan fails. It shows
 HIGH/CRITICAL vulnerability IDs, package versions, and secret rule/category plus
 file basename and line; it never renders secret matches, source snippets, titles,
-or descriptions. If no report was emitted, the summary says it is unavailable and
+or descriptions. Up to 500 vulnerability details and 30 secret metadata entries
+are shown, with omitted-entry counts and a distinct vulnerability-ID count. The
+213 reported package/CVE findings therefore fit without the previous truncation.
+If no report was emitted, the summary says it is unavailable and
 points to scanner diagnostics. Do not publish the raw report files because secret
 findings can contain sensitive values.
 
