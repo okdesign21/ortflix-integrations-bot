@@ -11,9 +11,78 @@ from pathlib import Path
 import pytest
 import yaml
 
+from scripts.scan_image import scan_image
 from scripts.summarize_trivy_report import summarize_report
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_makefile_has_cross_platform_trivy_target():
+    makefile = (PROJECT_ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "DOCKER ?= docker" in makefile
+    assert "PYTHON ?= python" in makefile
+    assert "TRIVY ?= trivy" in makefile
+    assert "trivy-image: docker-build" in makefile
+    assert 'scripts/scan_image.py "$(IMAGE_NAME)" --trivy "$(TRIVY)"' in makefile
+
+
+def test_local_image_scan_uses_ci_policy_and_summarizes_findings(capsys, tmp_path):
+    commands = []
+
+    def fake_run(command, check):
+        commands.append(command)
+        report_path = Path(command[command.index("--output") + 1])
+        report_path.write_text(
+            json.dumps(
+                {
+                    "Results": [
+                        {
+                            "Vulnerabilities": [
+                                {
+                                    "Severity": "HIGH",
+                                    "VulnerabilityID": "CVE-2026-12345",
+                                    "PkgName": "sample-lib",
+                                    "InstalledVersion": "1.2.3",
+                                    "FixedVersion": "1.2.4",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 1)
+
+    result = scan_image("ortflix-bot-addons:scan", trivy="trivy-test", run=fake_run)
+    output = capsys.readouterr().out
+    command = commands[0]
+    assert result == 1
+    assert command[:2] == ["trivy-test", "image"]
+    assert command[command.index("--scanners") + 1] == "vuln,secret"
+    assert command[command.index("--severity") + 1] == "CRITICAL,HIGH"
+    assert command[command.index("--exit-code") + 1] == "1"
+    assert command[-1] == "ortflix-bot-addons:scan"
+    assert "CVE-2026-12345" in output
+    assert "sample-lib 1.2.3 -> 1.2.4" in output
+    assert "Trivy image scan (sanitized)" in output
+
+
+def test_local_image_scan_returns_success_and_handles_missing_trivy(capsys):
+    success = scan_image(
+        "ortflix-bot-addons:scan",
+        run=lambda command, check: subprocess.CompletedProcess(command, 0),
+    )
+    assert success == 0
+    assert "Report unavailable or invalid" in capsys.readouterr().out
+
+    def missing(command, check):
+        raise FileNotFoundError(command[0])
+
+    result = scan_image("ortflix-bot-addons:scan", trivy="missing-trivy", run=missing)
+    captured = capsys.readouterr()
+    assert result == 127
+    assert "Trivy executable not found: missing-trivy" in captured.err
 
 
 def workflow(name):

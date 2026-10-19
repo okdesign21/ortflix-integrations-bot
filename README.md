@@ -194,7 +194,18 @@ default Plex and service URLs per deployment.
 ./run-local.sh test
 ./run-local.sh lint
 ./run-local.sh format
+make trivy-image
 ```
+
+With GNU Make, Python, Docker and Trivy available on `PATH`, `make trivy-image`
+builds `ortflix-bot-addons` and scans it using the CI policy:
+HIGH/CRITICAL vulnerabilities (including unfixed) and secrets. It prints only the
+sanitized Trivy summary and returns nonzero when the scan fails or reports findings.
+Docker and Trivy must be installed and available on `PATH`. Override their commands
+when needed, for example `make trivy-image DOCKER=docker.exe TRIVY=trivy.exe` or
+`make trivy-image PYTHON=py`. The target and Python wrapper work with GNU Make on
+Windows and Linux; the repository's existing helper targets may still require a
+POSIX shell.
 
 ### Webhook Test
 
