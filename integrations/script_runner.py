@@ -6,6 +6,8 @@ import signal
 import sys
 from pathlib import Path
 
+from .secret_config import redact_diagnostic
+
 PROCESS_TERMINATION_GRACE_SECONDS = 5
 
 
@@ -73,11 +75,16 @@ async def run_python_script(
         logger.error("%s script timed out after %ss: %s", log_prefix, timeout_seconds, script_name)
         return
     except Exception as err:
-        logger.error("%s script failed to launch (%s): %s", log_prefix, script_name, err)
+        logger.error(
+            "%s script failed to launch (%s): %s",
+            log_prefix,
+            script_name,
+            redact_diagnostic(str(err)),
+        )
         return
 
-    out = (stdout or b"").decode("utf-8", errors="replace").strip()
-    err = (stderr or b"").decode("utf-8", errors="replace").strip()
+    out = redact_diagnostic((stdout or b"").decode("utf-8", errors="replace").strip())
+    err = redact_diagnostic((stderr or b"").decode("utf-8", errors="replace").strip())
 
     if process.returncode == 0:
         logger.info("%s script succeeded: %s", log_prefix, script_name)

@@ -1,0 +1,90 @@
+name: Scan & Publish Image
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Resolve package version
+        id: version
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          if [[ "$CHANNEL" == release ]]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          elif [[ "$CHANNEL" == edge ]]; then
+            tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || echo v0.1.0)
+            count=$(git rev-list --count "${tag}..HEAD" 2>/dev/null || git rev-list --count HEAD)
+            IFS=. read -r major minor patch <<< "${tag#v}"
+            echo "value=${major}.${minor}.$((patch + 1)).dev${count}" >> "$GITHUB_OUTPUT"
+          else
+            echo '::error::Unsupported image channel'
+            exit 1
+          fi
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}/bot-addons
+            ghcr.io/${{ github.repository }}/telegram-bot
+          tags: |
+            type=semver,pattern={{version}},enable=${{ inputs.channel == 'release' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ inputs.channel == 'release' }}
+            type=raw,value=latest,enable=${{ inputs.channel == 'release' }}
+            type=raw,value=edge,enable=${{ inputs.channel == 'edge' }}
+            type=sha,prefix=sha-,enable=${{ inputs.channel == 'edge' }}
+      - name: Build candidate without publishing
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./dockerfile
+          load: true
+          push: false
+          tags: ortflix-bot-addons:candidate
+          build-args: APP_VERSION=${{ steps.version.outputs.value }}
+          labels: ${{ steps.meta.outputs.labels }}
+      - name: Gate the exact candidate on vulnerabilities and secrets
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.build.outputs.imageid }}
+          format: json
+          output: '${{ runner.temp }}/candidate-security.json'
+          scanners: 'vuln,secret'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: false
+          exit-code: '1'
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push the scanned image without rebuilding
+        env:
+          IMAGE_ID: ${{ steps.build.outputs.imageid }}
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          [[ "$IMAGE_ID" == sha256:* ]] || { echo '::error::Missing candidate image ID'; exit 1; }
+          [[ -n "$IMAGE_TAGS" ]] || { echo '::error::Missing image tags'; exit 1; }
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            docker tag "$IMAGE_ID" "$tag"
+            docker push "$tag"
+          done <<< "$IMAGE_TAGS"

@@ -42,10 +42,11 @@ async def test_run_manual_action_reports_nonzero_output(tmp_path: Path, monkeypa
     script = tmp_path / "check_plex_titles.py"
     script.write_text("", encoding="utf-8")
     monkeypatch.setattr(manual_actions, "SCRIPTS_DIR", tmp_path)
+    monkeypatch.setenv("RADARR_API_KEY", "manual-private-marker")
 
     async def _create_process(*args, **kwargs):
         assert kwargs["start_new_session"] == (manual_actions.os.name == "posix")
-        return _Process(2, b"partial output", b"failure details")
+        return _Process(2, b"partial output manual-private-marker", b"failure details")
 
     monkeypatch.setattr(manual_actions.asyncio, "create_subprocess_exec", _create_process)
 
@@ -55,6 +56,8 @@ async def test_run_manual_action_reports_nonzero_output(tmp_path: Path, monkeypa
     assert "Exit code:* `2`" in message
     assert "partial output" in message
     assert "failure details" in message
+    assert "manual-private-marker" not in message
+    assert "[REDACTED]" in message
 
 
 @pytest.mark.asyncio
@@ -102,4 +105,5 @@ async def test_run_manual_action_reports_launch_failure(tmp_path: Path, monkeypa
 
     assert not ok
     assert "Failed to run" in message
-    assert "permission denied" in message
+    assert "permission denied" not in message
+    assert "permissions" in message

@@ -5,7 +5,6 @@ Handles webhooks and callback queries using extensible handler registry.
 
 import logging
 import os
-import re
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
 from typing import Optional, cast
@@ -36,6 +35,7 @@ from integrations.radarr_automation import (
     configure_webhook_token_getter as configure_radarr_token_getter,
 )
 from integrations.radarr_automation import router as radarr_router
+from integrations.secret_config import redact_diagnostic
 from integrations.sonarr_automation import (
     configure_webhook_token_getter as configure_sonarr_token_getter,
 )
@@ -55,10 +55,7 @@ class _TelegramTokenRedactingFormatter(logging.Formatter):
         self._formatter = formatter
 
     def format(self, record: logging.LogRecord) -> str:
-        text = self._formatter.format(record)
-        if TELEGRAM_TOKEN:
-            text = text.replace(TELEGRAM_TOKEN, "[REDACTED]")
-        return re.sub(r"(/bot)\d+:[^/\s\"'<>]+", r"\1[REDACTED]", text, flags=re.IGNORECASE)
+        return redact_diagnostic(self._formatter.format(record), (TELEGRAM_TOKEN,))
 
 
 def _configure_logging() -> None:

@@ -165,7 +165,7 @@ async def test_redownload_callback_reports_api_failure():
     query.answer.assert_any_await(text="🔄 Creating redownload request...")
     query.answer.assert_any_await(text="❌ Failed to create redownload request", show_alert=True)
     bot.send_message.assert_awaited_once_with(
-        12345, "❌ Redownload request failed: Seerr unavailable"
+        12345, "❌ Redownload request failed. Check service availability."
     )
 
 

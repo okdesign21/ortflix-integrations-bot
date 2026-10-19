@@ -68,13 +68,9 @@ def load_plex_config() -> tuple[str, str]:
     if not url or not token:
         lines = []
         if not url:
-            lines.append(
-                "Plex URL: set PLEX_URL or override shared.plex.url in the config file."
-            )
+            lines.append("Plex URL: set PLEX_URL or override shared.plex.url in the config file.")
         if not token:
-            lines.append(
-                "Plex token: set PLEX_TOKEN_FILE or PLEX_TOKEN."
-            )
+            lines.append("Plex token: set PLEX_TOKEN_FILE or PLEX_TOKEN.")
         print("Error:\n" + "\n".join(f"  {x}" for x in lines))
         raise SystemExit(1)
 

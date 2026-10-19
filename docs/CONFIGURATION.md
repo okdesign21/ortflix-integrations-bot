@@ -217,13 +217,21 @@ starts.
 `LOG_LEVEL` controls application diagnostics. HTTPX, HTTPcore and Telegram loggers
 stay at `WARNING` to avoid verbose credential-bearing request logs, including when
 the application uses `DEBUG`. Root logging handlers present at bot startup redact
-the configured Telegram token and Telegram Bot API token paths in rendered
-messages and tracebacks while preserving their existing log format.
+known supported credentials and recognized credential-bearing URL/header fields
+in rendered messages and tracebacks while preserving their existing log format.
+Credentials loaded from secret files are remembered for redaction without reading
+those files again during logging. Environment values and URL-encoded known values
+are also covered.
 
-This is Telegram-token protection, not general sanitization of every API response
-or script output. Deployments adding logging handlers after startup or separate
-dependency log sinks must apply equivalent sanitization. Do not print real tokens
-or raw production request logs to test logging. Existing historical logs are not
+Automatic script output is redacted before logger calls. Manual-action output is
+redacted before truncation and presentation. Launch failures and redownload errors
+use generic chat summaries; upstream HTTP error bodies are not copied into API
+exceptions. Useful non-sensitive script output remains available to operators.
+
+Redaction is defense in depth, not a guarantee that arbitrary private text can be
+recognized. Do not deliberately print secrets or sensitive payloads. Deployments
+adding logging handlers after startup or separate dependency log sinks must apply
+equivalent sanitization. Existing historical logs and chat messages are not
 rewritten, and deploying this fix does not automatically rotate credentials.
 
 ## Script lifecycle
@@ -243,6 +251,44 @@ Timeouts still use `RADARR_SCRIPT_TIMEOUT`, `SONARR_SCRIPT_TIMEOUT`,
 `TAUTULLI_SCRIPT_TIMEOUT` or `MANUAL_ACTION_TIMEOUT`, as appropriate. The extra
 cleanup grace period is separate from those execution limits. Output-memory limits
 and concurrency control are separate concerns, not provided by timeout cleanup.
+
+## Build and publication security
+
+The Docker context is an allowlist: runtime entrypoint modules, Python sources
+under `integrations/` and `scripts/`, package metadata, the README, and bundled
+`config/bot_settings.yaml`. Local env files, operator overrides, private data files,
+tests, caches, and unrelated root Python files are excluded. Mount operator settings
+and credentials at runtime rather than copying them into an image. Python source
+can still contain hardcoded secrets; build exclusions do not replace secret checks.
+
+Linux CI enables `RUN_DOCKER_BUILD_TESTS=1`. Its disposable scratch-image test uses
+synthetic files to check both excluded private inputs and included runtime inputs.
+For a local opt-in run against an explicitly selected disposable Docker engine:
+
+```bash
+RUN_DOCKER_BUILD_TESTS=1 python -m pytest tests/security_build_test.py -q
+```
+
+Repository, image and publication-candidate scans fail on HIGH/CRITICAL
+vulnerabilities, including unfixed findings, and detected secrets. Scanner errors
+are blocking; there is no continue-on-error bypass. PR history scanning runs
+without provider verification, and repository/image secret checks also cover the
+publication path. Raw scan results go to temporary runner files, not uploaded
+artifacts or routine console output. Do not publish those files because secret
+findings can contain sensitive values.
+
+Tag and edge publication use the same reusable workflow. It builds and loads one
+candidate, scans that exact local image ID, and only then authenticates, tags, and
+pushes the scanned image without rebuilding. Both historical image repository
+aliases and the existing release/edge tag conventions remain supported. Image
+publication is single-platform, as before; multi-platform promotion needs an
+equivalent per-platform scanning design.
+
+Existing findings may block the first stricter CI run. Fix them or explicitly
+review a narrowly scoped exception with owner, reason and expiry; never restore
+non-blocking exit codes or add blanket exclusions. This change adds no exceptions.
+No production image has been scanned or published by the local tests. Native
+Docker and registry behavior must pass CI before relying on the new pipeline.
 
 ## Validation checklist
 

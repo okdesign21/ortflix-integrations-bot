@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from integrations.secret_config import SECRET_NAMES as ALL_SECRET_NAMES
-from integrations.secret_config import load_secret
+from integrations.secret_config import load_secret, redact_diagnostic
 
 SECRET_NAMES = (
     "TELEGRAM_TOKEN",
@@ -150,3 +150,35 @@ def test_valid_webhook_token_passes_startup(source, tmp_path, monkeypatch):
         monkeypatch.setenv("WEBHOOK_TOKEN", "test-webhook-token")
 
     config_values()["validate_config"]()
+
+
+@pytest.mark.parametrize("name", sorted(ALL_SECRET_NAMES))
+def test_diagnostics_redact_environment_credentials(name, monkeypatch):
+    monkeypatch.setenv(name, "synthetic-private-credential")
+    output = redact_diagnostic("Useful output: synthetic-private-credential")
+    assert output == "Useful output: [REDACTED]"
+
+
+def test_diagnostics_redact_file_secret_without_rereading(tmp_path, monkeypatch):
+    secret_file = tmp_path / "credential"
+    secret_file.write_text("file-private-marker", encoding="utf-8")
+    monkeypatch.setenv("RADARR_API_KEY_FILE", str(secret_file))
+    load_secret("RADARR_API_KEY")
+    secret_file.unlink()
+    assert redact_diagnostic("Result: file-private-marker") == "Result: [REDACTED]"
+
+
+@pytest.mark.parametrize(
+    "diagnostic",
+    [
+        "https://api.telegram.org/bot123456:unknown-marker/getMe",
+        "http://plex/library?X-Plex-Token=unknown-marker&other=1",
+        "Authorization: Bearer unknown-marker",
+        "X-Api-Key: unknown-marker",
+        "X-Webhook-Token=unknown-marker",
+    ],
+)
+def test_diagnostics_redact_credential_fields(diagnostic):
+    output = redact_diagnostic(diagnostic)
+    assert "unknown-marker" not in output
+    assert "[REDACTED]" in output

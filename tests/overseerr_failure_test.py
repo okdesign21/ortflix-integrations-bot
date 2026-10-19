@@ -26,6 +26,7 @@ async def test_call_overseerr_api_raises_on_upstream_http_error():
             await call_overseerr_api("/api/v1/request")
 
     session.close.assert_called_once()
+    response.text.assert_not_awaited()
 
 
 @pytest.mark.asyncio

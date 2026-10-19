@@ -207,7 +207,7 @@ async def test_run_python_script_launch_failure_logs_error(tmp_path: Path, monke
         "%s script failed to launch (%s): %s",
         "Sonarr",
         "ok.py",
-        launch_error,
+        str(launch_error),
     )
 
 
@@ -271,3 +271,26 @@ async def test_run_python_script_failure_logs_stdout_and_stderr(tmp_path: Path, 
     logger.error.assert_any_call("%s script failed (%s) rc=%s", "Radarr", "bad.py", 2)
     logger.error.assert_any_call("[%s stdout] %s", "bad.py", "bad out")
     logger.error.assert_any_call("[%s stderr] %s", "bad.py", "bad err")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("returncode", [0, 2])
+async def test_runner_redacts_output_before_logger_calls(tmp_path, monkeypatch, returncode):
+    script = tmp_path / "script.py"
+    script.write_text("", encoding="utf-8")
+    monkeypatch.setenv("SONARR_API_KEY", "runner-private-marker")
+    logger = MagicMock()
+
+    async def create_process(*args, **kwargs):
+        return _Proc(returncode, b"Useful output runner-private-marker", b"runner-private-marker")
+
+    monkeypatch.setattr(script_runner.asyncio, "create_subprocess_exec", create_process)
+    await run_python_script(
+        logger=logger,
+        script_path=script,
+        script_name="script.py",
+        timeout_seconds=3,
+        log_prefix="Audit",
+    )
+    assert "runner-private-marker" not in str(logger.mock_calls)
+    assert "Useful output [REDACTED]" in str(logger.mock_calls)
