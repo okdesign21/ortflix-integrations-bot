@@ -37,8 +37,8 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     mkvtoolnix=92.0-1 /tmp/ffmpeg.deb && \
     dpkg-query -W -f='${binary:Package} ${db:Status-Status}\n' > /tmp/runtime-packages && \
-    if grep -E '^(libxml2[^ ]*|libav(codec|device|filter|format|util)[^ ]*|libsw(resample|scale)[^ ]*) installed$' /tmp/runtime-packages; then \
-        echo 'Unexpected Debian XML/media runtime dependency' >&2; exit 1; \
+    if grep -E '^(libav(codec|device|filter|format|util)[^ ]*|libsw(resample|scale)[^ ]*) installed$' /tmp/runtime-packages; then \
+        echo 'Unexpected Debian media runtime dependency' >&2; exit 1; \
     fi && \
     rm /tmp/runtime-packages /tmp/ffmpeg.deb && \
     rm -rf /var/lib/apt/lists/*

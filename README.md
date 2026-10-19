@@ -275,9 +275,14 @@ The binaries are installed as a local Debian package with source identity `ffmpe
 and version `7:9.0.2-0ortflix1`, not as an official Debian backport. Package metadata
 remains available to Trivy. The signed source archive, signature, public key,
 license and configure log are retained under `/usr/local/share/ffmpeg/`.
-The runtime build rejects installed Debian libxml2 and libav/swscale/swresample
-packages instead of leaving the old media dependency tree beside new binaries.
+The runtime build rejects installed Debian libav/swscale/swresample packages
+instead of leaving the old FFmpeg dependency tree beside new binaries.
 MKVToolNix continues to use Debian's pinned package and runtime dependencies.
+Its required dependency chain is `mkvtoolnix` -> `libqt6core6t64` ->
+`shared-mime-info` -> `libxml2`, even with `--no-install-recommends`.
+The build therefore does not reject libxml2 merely for being installed; the
+unchanged blocking Trivy scan assesses its vulnerabilities. This FFmpeg change
+does not remediate the remaining Debian libxml2 findings.
 
 P3-006 remains open until an actual image build, offline smoke check and blocking
 Trivy scan pass. The smoke check covers Matroska probe/language edits and MP4

@@ -74,7 +74,8 @@ def test_media_build_avoids_debian_ffmpeg_and_external_libraries():
     assert '"Version: 7:${FFMPEG_VERSION}-0ortflix1"' in helper
     assert "dpkg-deb --root-owner-group --build" in helper
     assert "dpkg-query -W" in runtime
-    assert "Unexpected Debian XML/media runtime dependency" in runtime
+    assert "Unexpected Debian media runtime dependency" in runtime
+    assert "libxml2[^ ]*" not in runtime
     assert "ffmpeg=" not in runtime
     assert "libavcodec" not in runtime
 
