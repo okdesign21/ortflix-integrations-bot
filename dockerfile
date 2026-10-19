@@ -1,15 +1,16 @@
-FROM python:3.14-slim
+FROM python:3.14-slim-trixie
 
 WORKDIR /app
 
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     ffmpeg=7:7.1.5-0+deb13u1 \
     mkvtoolnix=92.0-1 && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy project files
-COPY pyproject.toml .
+COPY pyproject.toml build-constraints.txt README.md ./
 COPY *.py ./
 COPY config ./config
 COPY integrations ./integrations
@@ -20,8 +21,8 @@ ARG APP_VERSION=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${APP_VERSION}
 
 # Install build dependencies and package
-RUN pip install --no-cache-dir --upgrade pip==24.3.1 setuptools==75.6.0 wheel==0.45.1 && \
-    pip install --no-cache-dir .
+RUN python -m pip install --no-cache-dir --upgrade --constraint build-constraints.txt pip setuptools wheel && \
+    python -m pip install --no-cache-dir --build-constraint build-constraints.txt .
 
 EXPOSE 7777
 

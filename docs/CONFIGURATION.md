@@ -254,8 +254,44 @@ and concurrency control are separate concerns, not provided by timeout cleanup.
 
 ## Build and publication security
 
+### Python build tools
+
+`build-constraints.txt` is the single source for approved exact versions of pip,
+setuptools, wheel, the package build frontend, and setuptools-scm. Update those
+pins there, not in the Dockerfile or workflow commands. The package's
+`pyproject.toml` retains application dependencies and build compatibility/security
+minimums; it is not a duplicate list of exact tool versions.
+
+Docker and CI first upgrade pip using `--constraint build-constraints.txt`, then
+use the upgraded pip's `--build-constraint` support for isolated builds. Lint/test
+installs also use ordinary constraints. The release build frontend receives both
+`PIP_CONSTRAINT` and `PIP_BUILD_CONSTRAINT` as absolute paths to the same file, so
+its temporary backend environments and nested builds follow the selected versions.
+Build isolation remains enabled.
+
+For the shared workspace interpreter, the equivalent install sequence is:
+
+```bash
+python -m pip install --upgrade --constraint build-constraints.txt pip
+python -m pip install --constraint build-constraints.txt --build-constraint build-constraints.txt ".[dev]"
+```
+
+Use the canonical homeserver virtual environment for local Python operations.
+These constraints pin the named build tools, not every transitive or runtime
+dependency; they are not a complete application lockfile. Constraints do not
+install a package unless it is requested or required. Keep the constraints file
+available during builds; it is explicitly allowed in the Docker build context.
+
+Debian package versions and updates remain separate OS dependencies. The image
+uses an explicit Trixie base and applies available package updates, but that does
+not fix advisories for which Trixie has no patched package. No Trivy severity,
+unfixed-finding, or scanner-error gate is relaxed by build-tool centralization.
+A fresh image build and scan are still required to verify the vulnerability count.
+
+### Build context and gates
+
 The Docker context is an allowlist: runtime entrypoint modules, Python sources
-under `integrations/` and `scripts/`, package metadata, the README, and bundled
+under `integrations/` and `scripts/`, package metadata/build constraints, the README, and bundled
 `config/bot_settings.yaml`. Local env files, operator overrides, private data files,
 tests, caches, and unrelated root Python files are excluded. Mount operator settings
 and credentials at runtime rather than copying them into an image. Python source

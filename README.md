@@ -207,6 +207,11 @@ when needed, for example `make trivy-image DOCKER=docker.exe TRIVY=trivy.exe` or
 Windows and Linux; the repository's existing helper targets may still require a
 POSIX shell.
 
+Exact Python build-tool versions live in [build-constraints.txt](build-constraints.txt).
+Docker and CI share those constraints, including isolated package builds. Keep
+application dependencies and compatibility minimums in `pyproject.toml`; see
+[build-tool configuration](docs/CONFIGURATION.md#python-build-tools).
+
 ### Webhook Test
 
 ```bash

@@ -6,15 +6,72 @@ import os
 import shutil
 import subprocess
 import tarfile
+import tomllib
 from pathlib import Path
 
 import pytest
 import yaml
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from scripts.scan_image import scan_image
 from scripts.summarize_trivy_report import summarize_report
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_image_build_tools_and_isolated_build_use_patched_baselines():
+    dockerfile = (PROJECT_ROOT / "dockerfile").read_text(encoding="utf-8")
+    assert dockerfile.startswith("FROM python:3.14-slim-trixie\n")
+    assert "apt-get update &&" in dockerfile
+    assert "apt-get upgrade -y &&" in dockerfile
+    requirements = [
+        Requirement(line)
+        for line in (PROJECT_ROOT / "build-constraints.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    pins = {}
+    for requirement in requirements:
+        specifiers = list(requirement.specifier)
+        assert len(specifiers) == 1 and specifiers[0].operator == "=="
+        pins[requirement.name] = Version(specifiers[0].version)
+        assert str(requirement) not in dockerfile
+    assert pins["pip"] >= Version("25.3")
+    assert pins["setuptools"] >= Version("78.1.1")
+    assert pins["wheel"] >= Version("0.46.2")
+    assert {"build", "setuptools-scm"} <= pins.keys()
+    assert "COPY pyproject.toml build-constraints.txt README.md ./" in dockerfile
+    assert "--constraint build-constraints.txt pip setuptools wheel" in dockerfile
+    assert "--build-constraint build-constraints.txt ." in dockerfile
+    project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "setuptools>=78.1.1" in project["build-system"]["requires"]
+    assert "wheel>=0.46.2" in project["build-system"]["requires"]
+    for item in project["build-system"]["requires"]:
+        requirement = Requirement(item)
+        assert pins[requirement.name] in requirement.specifier
+
+
+def test_ci_uses_central_build_tool_constraints():
+    release_steps = workflow("release.yml")["jobs"]["build-python-package"]["steps"]
+    install = next(
+        step for step in release_steps if step.get("name") == "Install build dependencies"
+    )
+    assert "--constraint build-constraints.txt pip" in install["run"]
+    assert "--constraint build-constraints.txt build" in install["run"]
+    build = next(step for step in release_steps if step.get("name") == "Build package")
+    assert build["env"] == {
+        "PIP_CONSTRAINT": "${{ github.workspace }}/build-constraints.txt",
+        "PIP_BUILD_CONSTRAINT": "${{ github.workspace }}/build-constraints.txt",
+    }
+    assert "python -m build --installer pip" in build["run"]
+    lint = workflow("lint.yml")
+    for job in ("ruff", "pytest"):
+        steps = lint["jobs"][job]["steps"]
+        install = next(step for step in steps if step.get("name", "").startswith("Install "))
+        assert "--constraint build-constraints.txt pip" in install["run"]
+        assert "--build-constraint build-constraints.txt" in install["run"]
 
 
 def test_makefile_has_cross_platform_trivy_target():
@@ -265,6 +322,7 @@ def test_docker_context_uses_runtime_allowlist():
     assert rules == [
         "**",
         "!pyproject.toml",
+        "!build-constraints.txt",
         "!README.md",
         "!bot.py",
         "!app_config.py",
@@ -292,6 +350,7 @@ def test_docker_image_excludes_private_fixture_files(tmp_path):
         "app_config.py",
         "__init__.py",
         "pyproject.toml",
+        "build-constraints.txt",
         "README.md",
         "config/bot_settings.yaml",
     ]

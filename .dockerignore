@@ -1,5 +1,6 @@
 **
 !pyproject.toml
+!build-constraints.txt
 !README.md
 !bot.py
 !app_config.py

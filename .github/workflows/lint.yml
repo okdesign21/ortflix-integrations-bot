@@ -27,8 +27,8 @@ jobs:
           python-version: '3.11'
       - name: Install ruff
         run: |
-          python -m pip install --upgrade pip
-          pip install ruff
+          python -m pip install --upgrade --constraint build-constraints.txt pip
+          python -m pip install --constraint build-constraints.txt --build-constraint build-constraints.txt ruff
       - name: Run ruff checks
         run: |
           ruff check .
@@ -44,8 +44,8 @@ jobs:
           python-version: '3.11'
       - name: Install test dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install .[dev]
+          python -m pip install --upgrade --constraint build-constraints.txt pip
+          python -m pip install --constraint build-constraints.txt --build-constraint build-constraints.txt '.[dev]'
       - name: Run pytest
         env:
           RUN_DOCKER_BUILD_TESTS: '1'
