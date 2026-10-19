@@ -257,6 +257,47 @@ requires an offline import/media smoke check before scanning or publishing that
 image. Rebuild to change Python dependencies; do not install them into a running
 container. OS/media package vulnerabilities remain a separate scan requirement.
 
+### Native Media Toolchain Candidate
+
+The image builds FFmpeg 9.0.2 from the [upstream release](https://ffmpeg.org/download.html).
+The media-builder stage runs [docker/build_ffmpeg.sh](docker/build_ffmpeg.sh)
+to verify, compile and package it; the helper is not copied into the runtime image.
+The release signature is verified against the upstream signing-key fingerprint
+`FCF986EA15E6E293A5644F10B4322F04D67658D8` before extracting or compiling it.
+Build tools stay in a separate stage. FFmpeg libraries are linked statically into
+the two CLI programs; libc and zlib remain system runtime dependencies. External
+library autodetection, network support, playback and hardware capture devices are
+disabled. Built-in decoders, parsers, demuxers and muxers remain available for local
+probing and stream-copy remuxing. PCM and ALAC encoders support synthetic smoke
+fixtures; this is not a general-purpose transcoding image.
+
+The binaries are installed as a local Debian package with source identity `ffmpeg`
+and version `7:9.0.2-0ortflix1`, not as an official Debian backport. Package metadata
+remains available to Trivy. The signed source archive, signature, public key,
+license and configure log are retained under `/usr/local/share/ffmpeg/`.
+The runtime build rejects installed Debian libxml2 and libav/swscale/swresample
+packages instead of leaving the old media dependency tree beside new binaries.
+MKVToolNix continues to use Debian's pinned package and runtime dependencies.
+
+P3-006 remains open until an actual image build, offline smoke check and blocking
+Trivy scan pass. The smoke check covers Matroska probe/language edits and MP4
+stream-copy language edits, without networking or host volumes:
+
+```bash
+docker build --pull -t ortflix-bot-addons:scan .
+docker run --rm --network none --entrypoint python ortflix-bot-addons:scan -m scripts.check_runtime_image
+python scripts/scan_image.py ortflix-bot-addons:scan
+```
+
+Compare the rebuilt package/CVE inventory, including util-linux, MKVToolNix and
+other base libraries. Fewer findings alone do not establish remediation: confirm
+that the scanner inventories the local FFmpeg package, assess upstream advisories
+for its embedded libraries, and distinguish local fixes from Debian vendor status.
+An image scan may still report Debian advisories against this local source build.
+Do not suppress these findings or enable `ignore-unfixed` to force publication.
+Changing `FFMPEG_VERSION` requires the same signature, compatibility and security
+checks; a newer version alone is not proof of a patched image.
+
 Use `config/bot_settings.yaml` for default service URLs and Plex settings in Docker
 deployments. Keep environment variables for secrets and per-container overrides only.
 

@@ -60,6 +60,43 @@ def check_media_tools(directory: Path) -> None:
     tracks = json.loads(_run_command("mkvmerge", "-J", media).stdout).get("tracks", [])
     if not any(track.get("properties", {}).get("language") == "eng" for track in tracks):
         raise RuntimeError("Synthetic media language edit was not applied")
+    source = str(directory / "smoke.mp4")
+    tagged = str(directory / "tagged.mp4")
+    _run_command(
+        "ffmpeg",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=r=8000:cl=mono",
+        "-t",
+        "0.1",
+        "-c:a",
+        "alac",
+        source,
+    )
+    _run_command(
+        "ffmpeg",
+        "-v",
+        "error",
+        "-i",
+        source,
+        "-c",
+        "copy",
+        "-map",
+        "0",
+        "-metadata:s:a:0",
+        "language=eng",
+        tagged,
+    )
+    probe = _run_command("ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", tagged)
+    streams = json.loads(probe.stdout).get("streams", [])
+    if not any(
+        stream.get("codec_type") == "audio" and stream.get("tags", {}).get("language") == "eng"
+        for stream in streams
+    ):
+        raise RuntimeError("Synthetic MP4 stream-copy language edit was not applied")
 
 
 def main() -> int:

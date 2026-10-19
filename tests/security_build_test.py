@@ -54,6 +54,31 @@ def test_image_build_tools_and_isolated_build_use_patched_baselines():
         assert pins[requirement.name] in requirement.specifier
 
 
+def test_media_build_avoids_debian_ffmpeg_and_external_libraries():
+    dockerfile = (PROJECT_ROOT / "dockerfile").read_text(encoding="utf-8")
+    media, runtime = dockerfile.split("FROM python:3.14-slim-trixie AS runtime\n")
+    helper = (PROJECT_ROOT / "docker" / "build_ffmpeg.sh").read_text(encoding="utf-8")
+    assert "AS media-builder" in media
+    assert "COPY docker/build_ffmpeg.sh /build/build_ffmpeg.sh" in media
+    assert 'RUN sh /build/build_ffmpeg.sh "$FFMPEG_VERSION"' in media
+    assert "!docker/build_ffmpeg.sh" in (PROJECT_ROOT / ".dockerignore").read_text()
+    assert helper.startswith("#!/bin/sh\nset -eu\n")
+    assert "https://ffmpeg.org/releases/ffmpeg-" in helper
+    assert "gpg --batch --verify" in helper
+    assert "FCF986EA15E6E293A5644F10B4322F04D67658D8" in helper
+    assert helper.index("gpg --batch --verify") < helper.index("tar -xJf")
+    for option in ("--disable-autodetect", "--disable-network", "--disable-shared"):
+        assert option in helper
+    assert "COPY --from=media-builder /ffmpeg.deb /tmp/ffmpeg.deb" in runtime
+    assert "'Package: ffmpeg' 'Source: ffmpeg'" in helper
+    assert '"Version: 7:${FFMPEG_VERSION}-0ortflix1"' in helper
+    assert "dpkg-deb --root-owner-group --build" in helper
+    assert "dpkg-query -W" in runtime
+    assert "Unexpected Debian XML/media runtime dependency" in runtime
+    assert "ffmpeg=" not in runtime
+    assert "libavcodec" not in runtime
+
+
 def test_runtime_image_does_not_retain_build_tooling():
     dockerfile = (PROJECT_ROOT / "dockerfile").read_text(encoding="utf-8")
     builder, runtime = dockerfile.split("FROM python:3.14-slim-trixie AS runtime\n")
@@ -88,16 +113,42 @@ def test_runtime_smoke_uses_only_synthetic_media_and_safe_arguments(tmp_path, mo
     def run_command(*args):
         commands.append(args)
         if args[0] == "ffprobe":
-            data = {"streams": [{"codec_type": "audio"}]}
+            data = {"streams": [{"codec_type": "audio", "tags": {"language": "eng"}}]}
         else:
             data = {"tracks": [{"properties": {"language": "eng"}}]}
         return subprocess.CompletedProcess(args, 0, json.dumps(data).encode())
 
     monkeypatch.setattr("scripts.check_runtime_image._run_command", run_command)
     check_media_tools(tmp_path)
-    assert [command[0] for command in commands] == ["ffmpeg", "ffprobe", "mkvpropedit", "mkvmerge"]
+    assert [command[0] for command in commands] == [
+        "ffmpeg",
+        "ffprobe",
+        "mkvpropedit",
+        "mkvmerge",
+        "ffmpeg",
+        "ffmpeg",
+        "ffprobe",
+    ]
     assert "anullsrc=r=8000:cl=mono" in commands[0]
     assert str(tmp_path / "smoke.mkv") in commands[0]
+    assert "alac" in commands[4]
+    assert "copy" in commands[5] and "language=eng" in commands[5]
+    assert str(tmp_path / "tagged.mp4") in commands[6]
+
+
+def test_runtime_smoke_rejects_missing_mp4_language_tag(tmp_path, monkeypatch):
+    monkeypatch.setattr("scripts.check_runtime_image.shutil.which", lambda name: name)
+
+    def run_command(*args):
+        if args[0] == "ffprobe":
+            data = {"streams": [{"codec_type": "audio"}]}
+        else:
+            data = {"tracks": [{"properties": {"language": "eng"}}]}
+        return subprocess.CompletedProcess(args, 0, json.dumps(data).encode())
+
+    monkeypatch.setattr("scripts.check_runtime_image._run_command", run_command)
+    with pytest.raises(RuntimeError, match="MP4 stream-copy language edit was not applied"):
+        check_media_tools(tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -424,6 +475,9 @@ def test_docker_context_uses_runtime_allowlist():
         "!pyproject.toml",
         "!build-constraints.txt",
         "!README.md",
+        "!docker",
+        "docker/**",
+        "!docker/build_ffmpeg.sh",
         "!bot.py",
         "!app_config.py",
         "!__init__.py",
@@ -453,6 +507,7 @@ def test_docker_image_excludes_private_fixture_files(tmp_path):
         "build-constraints.txt",
         "README.md",
         "config/bot_settings.yaml",
+        "docker/build_ffmpeg.sh",
     ]
     included += ["integrations/handler.py", "scripts/action.py"]
     excluded = [
@@ -462,6 +517,7 @@ def test_docker_image_excludes_private_fixture_files(tmp_path):
         "config/bot_settings.local.yaml",
         "config/private.yaml",
         "integrations/private.json",
+        "docker/private.env",
         "tests/private.py",
         "private.py",
     ]
