@@ -262,7 +262,7 @@ pins there, not in the Dockerfile or workflow commands. The package's
 `pyproject.toml` retains application dependencies and build compatibility/security
 minimums; it is not a duplicate list of exact tool versions.
 
-Docker and CI first upgrade pip using `--constraint build-constraints.txt`, then
+The Docker builder and CI first upgrade pip using `--constraint build-constraints.txt`, then
 use the upgraded pip's `--build-constraint` support for isolated builds. Lint/test
 installs also use ordinary constraints. The release build frontend receives both
 `PIP_CONSTRAINT` and `PIP_BUILD_CONSTRAINT` as absolute paths to the same file, so
@@ -287,6 +287,33 @@ uses an explicit Trixie base and applies available package updates, but that doe
 not fix advisories for which Trixie has no patched package. No Trivy severity,
 unfixed-finding, or scanner-error gate is relaxed by build-tool centralization.
 A fresh image build and scan are still required to verify the vulnerability count.
+
+### Runtime image
+
+The builder stage uses the approved toolchain to build the application and its
+runtime dependencies into wheels. The final stage installs those wheels offline,
+then removes pip, setuptools, wheel, the temporary wheelhouse, and ensurepip's
+bundled installer. Build tools and constraints remain builder/CI inputs, not runtime
+requirements. Rebuild the image to change dependencies rather than installing
+packages into a running container. This separation removes unnecessary toolchain
+copies, including dependencies vendored inside pip; it is not a CVE suppression.
+
+Both image scanning and publication first require an offline smoke check of the
+exact candidate with no network or host media mounts. The check verifies that
+build-tool modules are absent, imports the bot using synthetic configuration, and
+generates a tiny synthetic audio file for FFmpeg/ffprobe and MKV language-edit
+checks. It does not contact Telegram, Plex or other services. Use the same Python
+module launch context as the production entrypoint:
+
+```bash
+docker run --rm --network none --entrypoint python ortflix-bot-addons:scan -m scripts.check_runtime_image
+```
+
+These native checks still need to pass in CI; local source tests mock media tools.
+The media APT package versions and runtime identity are unchanged. Removing build
+tools does not patch libxml2, FFmpeg or other remaining OS libraries, and the
+blocking Trivy scan may still fail. Do not treat an unbuilt/unscanned source change
+as proof that all 213 reported package/CVE findings are resolved.
 
 ### Build context and gates
 

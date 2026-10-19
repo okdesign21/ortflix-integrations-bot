@@ -69,6 +69,10 @@ jobs:
       - name: Build Docker image for Integrations service
         run: |
           docker build -t ortflix-bot-addons:scan .
+      - name: Check runtime without network or host media
+        run: >-
+          docker run --rm --network none --entrypoint python
+          ortflix-bot-addons:scan -m scripts.check_runtime_image
       - name: Run Trivy scan on built image
         id: trivy_image
         uses: aquasecurity/trivy-action@master

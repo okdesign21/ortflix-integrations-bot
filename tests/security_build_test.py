@@ -14,6 +14,7 @@ import yaml
 from packaging.requirements import Requirement
 from packaging.version import Version
 
+from scripts.check_runtime_image import check_media_tools, check_python_runtime
 from scripts.scan_image import scan_image
 from scripts.summarize_trivy_report import summarize_report
 
@@ -22,7 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 def test_image_build_tools_and_isolated_build_use_patched_baselines():
     dockerfile = (PROJECT_ROOT / "dockerfile").read_text(encoding="utf-8")
-    assert dockerfile.startswith("FROM python:3.14-slim-trixie\n")
+    assert dockerfile.startswith("FROM python:3.14-slim-trixie AS builder\n")
     assert "apt-get update &&" in dockerfile
     assert "apt-get upgrade -y &&" in dockerfile
     requirements = [
@@ -44,13 +45,76 @@ def test_image_build_tools_and_isolated_build_use_patched_baselines():
     assert {"build", "setuptools-scm"} <= pins.keys()
     assert "COPY pyproject.toml build-constraints.txt README.md ./" in dockerfile
     assert "--constraint build-constraints.txt pip setuptools wheel" in dockerfile
-    assert "--build-constraint build-constraints.txt ." in dockerfile
+    assert "--build-constraint build-constraints.txt --wheel-dir /wheels ." in dockerfile
     project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert "setuptools>=78.1.1" in project["build-system"]["requires"]
     assert "wheel>=0.46.2" in project["build-system"]["requires"]
     for item in project["build-system"]["requires"]:
         requirement = Requirement(item)
         assert pins[requirement.name] in requirement.specifier
+
+
+def test_runtime_image_does_not_retain_build_tooling():
+    dockerfile = (PROJECT_ROOT / "dockerfile").read_text(encoding="utf-8")
+    builder, runtime = dockerfile.split("FROM python:3.14-slim-trixie AS runtime\n")
+    assert "python -m pip wheel" in builder
+    assert "COPY --from=builder /wheels /wheels" in runtime
+    assert "--no-index --find-links=/wheels /wheels/ortflix_integrations-*.whl" in runtime
+    assert "python -m pip uninstall --yes pip setuptools wheel" in runtime
+    assert "rm -rf /wheels /usr/local/lib/python*/ensurepip" in runtime
+    assert "--upgrade" not in runtime
+    assert "build-constraints.txt" not in runtime
+    assert 'ENTRYPOINT ["python", "-m", "bot"]' in runtime
+
+
+def test_runtime_smoke_rejects_remaining_build_tools(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.check_runtime_image.importlib.util.find_spec", lambda name: object()
+    )
+    with pytest.raises(RuntimeError, match="Build-only module remains"):
+        check_python_runtime()
+
+
+def test_runtime_smoke_rejects_missing_media_tools(tmp_path, monkeypatch):
+    monkeypatch.setattr("scripts.check_runtime_image.shutil.which", lambda name: None)
+    with pytest.raises(RuntimeError, match="Required media tool missing"):
+        check_media_tools(tmp_path)
+
+
+def test_runtime_smoke_uses_only_synthetic_media_and_safe_arguments(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr("scripts.check_runtime_image.shutil.which", lambda name: name)
+
+    def run_command(*args):
+        commands.append(args)
+        if args[0] == "ffprobe":
+            data = {"streams": [{"codec_type": "audio"}]}
+        else:
+            data = {"tracks": [{"properties": {"language": "eng"}}]}
+        return subprocess.CompletedProcess(args, 0, json.dumps(data).encode())
+
+    monkeypatch.setattr("scripts.check_runtime_image._run_command", run_command)
+    check_media_tools(tmp_path)
+    assert [command[0] for command in commands] == ["ffmpeg", "ffprobe", "mkvpropedit", "mkvmerge"]
+    assert "anullsrc=r=8000:cl=mono" in commands[0]
+    assert str(tmp_path / "smoke.mkv") in commands[0]
+
+
+@pytest.mark.parametrize(
+    "filename,job",
+    [("security.yml", "trivy-image"), ("publish-image.yml", "publish")],
+)
+def test_image_scan_requires_offline_runtime_smoke(filename, job):
+    steps = workflow(filename)["jobs"][job]["steps"]
+    smoke = next(
+        step for step in steps if step.get("name") == "Check runtime without network or host media"
+    )
+    scan = next(step for step in steps if "trivy-action" in step.get("uses", ""))
+    assert "docker run --rm --network none --entrypoint python" in smoke["run"]
+    assert "-m scripts.check_runtime_image" in smoke["run"]
+    assert "--volume" not in smoke["run"] and " -v " not in smoke["run"]
+    assert "continue-on-error" not in smoke and "if" not in smoke
+    assert steps.index(smoke) < steps.index(scan)
 
 
 def test_ci_uses_central_build_tool_constraints():

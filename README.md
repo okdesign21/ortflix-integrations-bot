@@ -250,6 +250,12 @@ or modify mounted media files. Mount the media and configuration paths required 
 your scripts, and use Docker secrets for tokens and API keys where possible. The
 container entrypoint is `python -m bot`.
 
+Python build tools are confined to the builder stage; pip, setuptools, wheel and
+ensurepip's bundled installer are absent from the final runtime filesystem. CI
+requires an offline import/media smoke check before scanning or publishing that
+image. Rebuild to change Python dependencies; do not install them into a running
+container. OS/media package vulnerabilities remain a separate scan requirement.
+
 Use `config/bot_settings.yaml` for default service URLs and Plex settings in Docker
 deployments. Keep environment variables for secrets and per-container overrides only.
 

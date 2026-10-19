@@ -60,6 +60,12 @@ jobs:
           tags: ortflix-bot-addons:candidate
           build-args: APP_VERSION=${{ steps.version.outputs.value }}
           labels: ${{ steps.meta.outputs.labels }}
+      - name: Check runtime without network or host media
+        env:
+          IMAGE_ID: ${{ steps.build.outputs.imageid }}
+        run: >-
+          docker run --rm --network none --entrypoint python
+          "$IMAGE_ID" -m scripts.check_runtime_image
       - name: Gate the exact candidate on vulnerabilities and secrets
         uses: aquasecurity/trivy-action@master
         with:
