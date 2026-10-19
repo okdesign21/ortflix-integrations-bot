@@ -274,7 +274,12 @@ vulnerabilities, including unfixed findings, and detected secrets. Scanner error
 are blocking; there is no continue-on-error bypass. PR history scanning runs
 without provider verification, and repository/image secret checks also cover the
 publication path. Raw scan results go to temporary runner files, not uploaded
-artifacts or routine console output. Do not publish those files because secret
+artifacts or routine console output. An `always()` step reads each report and adds
+a sanitized summary to the GitHub step summary, even when the scan fails. It shows
+HIGH/CRITICAL vulnerability IDs, package versions, and secret rule/category plus
+file basename and line; it never renders secret matches, source snippets, titles,
+or descriptions. If no report was emitted, the summary says it is unavailable and
+points to scanner diagnostics. Do not publish the raw report files because secret
 findings can contain sensitive values.
 
 Tag and edge publication use the same reusable workflow. It builds and loads one

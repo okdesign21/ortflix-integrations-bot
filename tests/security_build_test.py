@@ -1,6 +1,7 @@
 """Regression checks for private build inputs and publication policies."""
 
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -9,6 +10,8 @@ from pathlib import Path
 
 import pytest
 import yaml
+
+from scripts.summarize_trivy_report import summarize_report
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,6 +40,77 @@ def test_scan_findings_and_errors_block_publication():
         '--no-verification --fail --json > "$RUNNER_TEMP/history-secrets.json"'
         in secret_scan["run"]
     )
+    for job_name, report_name in (
+        ("trivy-fs", "repository-security.json"),
+        ("trivy-image", "image-security.json"),
+    ):
+        steps = security["jobs"][job_name]["steps"]
+        scanner_index = next(
+            index for index, step in enumerate(steps) if "trivy-action" in step.get("uses", "")
+        )
+        summary = steps[scanner_index + 1]
+        assert summary["if"] == "always()"
+        assert "summarize_trivy_report.py" in summary["run"]
+        assert (
+            summary["env"]["SCAN_OUTCOME"]
+            == f"${{{{ steps.{steps[scanner_index]['id']}.outcome }}}}"
+        )
+        assert report_name in summary["run"]
+        assert '"$GITHUB_STEP_SUMMARY"' in summary["run"]
+
+
+def test_trivy_summary_shows_vulnerability_metadata_but_not_payloads(tmp_path):
+    secret_marker = "synthetic-secret-do-not-print"
+    report = tmp_path / "trivy.json"
+    report.write_text(
+        json.dumps(
+            {
+                "Results": [
+                    {
+                        "Target": "usr/local/app/config.py",
+                        "Vulnerabilities": [
+                            {
+                                "Severity": "HIGH",
+                                "VulnerabilityID": "CVE-2026-12345",
+                                "PkgName": "example-package",
+                                "InstalledVersion": "1.0.0",
+                                "FixedVersion": "1.0.1",
+                                "Description": secret_marker,
+                            }
+                        ],
+                        "Secrets": [
+                            {
+                                "Severity": "CRITICAL",
+                                "RuleID": "generic-api-key",
+                                "Category": "Generic",
+                                "StartLine": 42,
+                                "Match": secret_marker,
+                                "Code": {"Lines": [{"Content": secret_marker}]},
+                                "Title": secret_marker,
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary = summarize_report(report, "image", "failure")
+    assert "CVE-2026-12345" in summary
+    assert "example-package 1.0.0 -> 1.0.1" in summary
+    assert "rule=generic-api-key category=Generic at config.py:42" in summary
+    assert "CRITICAL secret findings: 1" in summary
+    assert secret_marker not in summary
+
+
+def test_trivy_summary_reports_unavailable_or_empty_reports_safely(tmp_path):
+    missing = summarize_report(tmp_path / "missing.json", "image", "failure")
+    assert "Report unavailable or invalid" in missing
+    report = tmp_path / "empty.json"
+    report.write_text('{"Results": []}', encoding="utf-8")
+    empty = summarize_report(report, "image", "failure")
+    assert "No HIGH/CRITICAL findings in the emitted report" in empty
+    assert "inspect scanner diagnostics" in empty
 
 
 @pytest.mark.parametrize(
