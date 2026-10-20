@@ -1,55 +1,36 @@
-name: Dependabot auto-approve and merge
+name: Dependabot auto-approve
 
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
+  contents: read
   pull-requests: write
-  contents: write
 
 jobs:
-  approve-and-automerge:
-    if: github.actor == 'dependabot[bot]'
+  approve:
+    if: github.actor == 'dependabot[bot]' && github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Approve and enable auto-merge
+      - name: Approve Dependabot update
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.DEPENDABOT_PAT }}
+          github-token: ${{ secrets.DEPENDABOT_PAT || github.token }}
           script: |
             const pr = context.payload.pull_request;
-            const prNumber = pr.number;
-            const mergeable = pr.mergeable;
-
-            // Skip only when there are known conflicts
-            if (mergeable === false) {
-              core.info('PR has conflicts; skipping approval and auto-merge.');
-              return;
-            }
-
-            // Approve the PR (satisfies branch protection required review)
+            if (pr.draft) return;
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number
+            });
+            if (reviews.some(review => review.state === 'APPROVED' && review.commit_id === pr.head.sha)) return;
             await github.rest.pulls.createReview({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: prNumber,
+              pull_number: pr.number,
+              commit_id: pr.head.sha,
               event: 'APPROVE',
-              body: 'Auto-approved by Dependabot workflow. Will merge when checks pass.'
+              body: 'Automatically approved Dependabot update. CI checks and manual merge still apply.'
             });
-
-            // Enable auto-merge so GitHub merges when required status checks pass
-            const mutation = `
-              mutation($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod) {
-                enablePullRequestAutoMerge(input: {
-                  pullRequestId: $pullRequestId,
-                  mergeMethod: $mergeMethod
-                }) {
-                  pullRequest { autoMergeRequest { enabledAt } }
-                }
-              }
-            `;
-            await github.graphql(mutation, {
-              pullRequestId: pr.node_id,
-              mergeMethod: 'SQUASH'
-            });
-            core.info('Auto-merge enabled. PR will merge when required checks pass.');

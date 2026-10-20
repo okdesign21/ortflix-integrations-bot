@@ -1,0 +1,69 @@
+name: Weekly Dependency Updates
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weekly-dependency-updates
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [runtime, build-tools]
+    env:
+      UPDATE_BRANCH: automation/dependencies-${{ matrix.group }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install metadata parser
+        run: python -m pip install --constraint build-constraints.txt packaging
+      - name: Propose updates
+        env:
+          UPDATE_GROUP: ${{ matrix.group }}
+        run: python scripts/update_dependencies.py --group "$UPDATE_GROUP" --apply
+      - name: Create or refresh update PR
+        id: pr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ github.token }}
+          branch: ${{ env.UPDATE_BRANCH }}
+          base: ${{ github.event.repository.default_branch }}
+          delete-branch: true
+          add-paths: ${{ matrix.group == 'runtime' && 'dockerfile' || 'build-constraints.txt' }}
+          commit-message: 'build(deps): refresh ${{ matrix.group }} pins'
+          title: 'build(deps): refresh ${{ matrix.group }} pins'
+          body: |
+            Weekly dependency proposal. Only tracked version/digest changes create or update this PR.
+
+            Runtime updates keep the current Python and FFmpeg package streams and coordinate the base digest with native RPM pins.
+            Python build-tool updates select stable, non-yanked releases compatible with Python 3.11 and 3.14.
+
+            Lint, tests, Docker build, offline media smoke and Trivy/native inventory checks must pass. Merge remains manual.
+          labels: dependencies
+          reviewers: okdesign21
+      - name: Run CI for changed update PR
+        if: steps.pr.outputs.pull-request-operation == 'created' || steps.pr.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run lint.yml --repo "$GITHUB_REPOSITORY" --ref "$UPDATE_BRANCH"
+          gh workflow run security.yml --repo "$GITHUB_REPOSITORY" --ref "$UPDATE_BRANCH"

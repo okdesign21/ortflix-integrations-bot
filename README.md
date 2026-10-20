@@ -314,6 +314,38 @@ The release workflow runs on tags matching `v*`. For the planned release, create
 `v*.*.*`; setuptools-scm will publish package version and the Docker workflow
 will publish the tagged image plus `latest`.
 
+## Dependency Maintenance
+
+Security checks build and scan the default branch nightly at 03:00 UTC; they do
+not deploy or inspect the live server. Weekly update proposals run Mondays at
+04:00 UTC, or manually through the **Weekly Dependency Updates** workflow.
+
+Two fixed branches keep proposals separate: `automation/dependencies-runtime`
+updates the base digest and RPM pins together, while
+`automation/dependencies-build-tools` updates Python build constraints to stable,
+non-yanked releases compatible with Python 3.11 and 3.14. Existing Python and
+FFmpeg package streams stay unchanged. Missing packages, unsupported RPM editions
+and downgrades fail for manual investigation instead of changing the runtime.
+
+No tracked version/digest changes means no PR. New changes refresh the existing
+update PR rather than creating duplicates. Bot-created PRs explicitly dispatch
+the existing lint and security workflows. Dependabot continues weekly application
+and GitHub Actions updates, with automatic approval retained; merging is manual.
+Required status checks must be configured in the repository's branch rules.
+
+Enable **Settings > Actions > General > Allow GitHub Actions to create and approve
+pull requests**. Approval uses the existing `DEPENDABOT_PAT` secret when configured,
+otherwise `GITHUB_TOKEN`; the token must be allowed to approve reviews. Scheduled
+workflows start after these changes reach the default branch. This source change
+does not cancel auto-merge already enabled on an existing PR.
+
+The updater supports read-only discovery without modifying files:
+
+```bash
+python scripts/update_dependencies.py --group runtime
+python scripts/update_dependencies.py --group build-tools
+```
+
 ## Related Projects
 
 - Main stack: [`ortflix`](https://github.com/okdesign21/ortflix)

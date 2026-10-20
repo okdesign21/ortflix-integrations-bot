@@ -17,6 +17,7 @@ from packaging.version import Version
 from scripts.check_runtime_image import check_media_tools, check_python_runtime
 from scripts.scan_image import scan_image
 from scripts.summarize_trivy_report import summarize_report, validate_runtime_inventory
+from scripts.update_dependencies import runtime_pins
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -56,14 +57,16 @@ def test_image_build_tools_and_isolated_build_use_patched_baselines():
 def test_media_runtime_uses_vendor_packages_and_preserves_inventory():
     dockerfile = (PROJECT_ROOT / "dockerfile").read_text(encoding="utf-8")
     base, stages = dockerfile.split("FROM base AS builder\n")
-    for package in (
-        "python314-base=3.14.8-1.1",
-        "ffmpeg-8=8.1.3-3.1",
-        "mkvtoolnix=102.0-1.2",
-        "libxml2-16=2.15.4-1.1",
-        "ca-certificates",
-    ):
-        assert package in base
+    pins = runtime_pins(dockerfile)
+    for package, minimum in {
+        "python314-base": "3.14.8",
+        "ffmpeg-8": "8.1.3",
+        "mkvtoolnix": "102.0",
+        "libxml2-16": "2.15.4",
+    }.items():
+        assert package + "=" in base
+        assert Version(pins[package].rsplit("-", 1)[0]) >= Version(minimum)
+    assert "ca-certificates" in pins
     assert "FROM base AS runtime" in stages
     for obsolete in ("apt-get", "media-builder", "ffmpeg.deb", "build_ffmpeg.sh"):
         assert obsolete not in dockerfile
@@ -316,6 +319,48 @@ def workflow(name):
     )
 
 
+def test_dependency_maintenance_keeps_approval_and_nightly_scans():
+    assert workflow("security.yml")["on"]["schedule"] == [{"cron": "0 3 * * *"}]
+    approval = workflow("dependabot-auto-approve.yaml")
+    job = approval["jobs"]["approve"]
+    assert "github.actor == 'dependabot[bot]'" in job["if"]
+    assert "github.event.pull_request.user.login == 'dependabot[bot]'" in job["if"]
+    assert approval["permissions"] == {"contents": "read", "pull-requests": "write"}
+    assert len(job["steps"]) == 1
+    script = job["steps"][0]["with"]["script"]
+    assert "event: 'APPROVE'" in script
+    assert "enablePullRequestAutoMerge" not in script
+    assert "merge(" not in script
+
+
+def test_weekly_updates_reuse_branches_and_dispatch_ci_without_automerge():
+    maintenance = workflow("dependency-updates.yml")
+    assert maintenance["on"]["schedule"] == [{"cron": "0 4 * * 1"}]
+    assert set(maintenance["on"]) == {"schedule", "workflow_dispatch"}
+    job = maintenance["jobs"]["propose"]
+    assert job["strategy"]["matrix"]["group"] == ["runtime", "build-tools"]
+    checkout = job["steps"][0]
+    assert checkout["with"]["ref"] == "${{ github.event.repository.default_branch }}"
+    assert checkout["with"]["persist-credentials"] == "false"
+    pr = next(step for step in job["steps"] if step.get("id") == "pr")
+    assert pr["with"]["branch"] == "${{ env.UPDATE_BRANCH }}"
+    assert "branch-suffix" not in pr["with"]
+    assert pr["with"]["add-paths"] == (
+        "${{ matrix.group == 'runtime' && 'dockerfile' || 'build-constraints.txt' }}"
+    )
+    dispatch = job["steps"][-1]
+    assert "'created'" in dispatch["if"] and "'updated'" in dispatch["if"]
+    assert "gh workflow run lint.yml" in dispatch["run"]
+    assert "gh workflow run security.yml" in dispatch["run"]
+    dependabot = yaml.load(
+        (PROJECT_ROOT / ".github" / "dependabot.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    assert {entry["package-ecosystem"] for entry in dependabot["updates"]} == {
+        "pip",
+        "github-actions",
+    }
+
+
 def test_scan_findings_and_errors_block_publication():
     security = workflow("security.yml")
     for job in security["jobs"].values():
@@ -539,6 +584,7 @@ def test_docker_context_uses_runtime_allowlist():
         "!scripts",
         "scripts/**",
         "!scripts/*.py",
+        "scripts/update_dependencies.py",
     ]
 
 
@@ -562,6 +608,7 @@ def test_docker_image_excludes_private_fixture_files(tmp_path):
         ".env",
         "scripts/.env",
         "scripts/credentials.json",
+        "scripts/update_dependencies.py",
         "config/bot_settings.local.yaml",
         "config/private.yaml",
         "integrations/private.json",
