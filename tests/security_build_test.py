@@ -352,6 +352,15 @@ def test_weekly_updates_reuse_branches_and_dispatch_ci_without_automerge():
     assert "'created'" in dispatch["if"] and "'updated'" in dispatch["if"]
     assert "gh workflow run lint.yml" in dispatch["run"]
     assert "gh workflow run security.yml" in dispatch["run"]
+    assert '-f history_base="$HISTORY_BASE" -f history_head="$HISTORY_HEAD"' in dispatch["run"]
+    assert dispatch["env"]["HISTORY_HEAD"] == "${{ steps.pr.outputs.pull-request-head-sha }}"
+    history = workflow("security.yml")["jobs"]["trufflehog"]
+    assert "workflow_dispatch" in history["if"]
+    assert "inputs.history_base" in history["if"] and "inputs.history_head" in history["if"]
+    assert history["steps"][0]["with"]["ref"] == (
+        "${{ github.event.pull_request.head.sha || inputs.history_head || github.sha }}"
+    )
+    assert "^[0-9a-f]{40}$" in history["steps"][-1]["run"]
     dependabot = yaml.load(
         (PROJECT_ROOT / ".github" / "dependabot.yml").read_text(), Loader=yaml.BaseLoader
     )
@@ -395,6 +404,48 @@ def test_scan_findings_and_errors_block_publication():
         )
         assert report_name in summary["run"]
         assert '"$GITHUB_STEP_SUMMARY"' in summary["run"]
+
+
+@pytest.mark.parametrize(
+    "base,head,checkout,valid",
+    [
+        ("a" * 40, "b" * 40, "b" * 40, True),
+        ("not-a-commit", "b" * 40, "b" * 40, False),
+        ("a" * 40, "", "b" * 40, False),
+        ("a" * 40, "b" * 40, "c" * 40, False),
+    ],
+)
+def test_history_scan_fails_closed_before_scanner_for_invalid_ranges(
+    tmp_path, base, head, checkout, valid
+):
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("Requires Bash for history-scan guard validation")
+    script = tmp_path / "history.sh"
+    log = tmp_path / "scanner-called"
+    command = workflow("security.yml")["jobs"]["trufflehog"]["steps"][-1]["run"]
+    script.write_text(
+        'git() { if [[ "$1" == rev-parse ]]; then printf "%s\\n" "$CHECKOUT_SHA"; fi; }\n'
+        'docker() { printf "called\\n" >> "$HISTORY_LOG"; }\n' + command,
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment.update(
+        BASE_COMMIT=base,
+        HEAD_COMMIT=head,
+        CHECKOUT_SHA=checkout,
+        HISTORY_LOG=log.as_posix(),
+        RUNNER_TEMP=tmp_path.as_posix(),
+    )
+    result = subprocess.run(
+        [bash, "-e", "-o", "pipefail", script.as_posix()],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert (result.returncode == 0) is valid
+    assert log.exists() is valid
 
 
 def test_trivy_summary_shows_vulnerability_metadata_but_not_payloads(tmp_path):
@@ -520,6 +571,12 @@ def test_scanned_candidate_is_pushed_without_rebuilding():
     assert "build" not in publish["run"]
     assert steps.index(build) < steps.index(scan) < steps.index(publish)
     assert "if" not in scan and "if" not in publish
+    summary = next(
+        step for step in steps if step.get("name") == "Verify native runtime scan coverage"
+    )
+    assert summary["if"] == "always()"
+    assert summary["env"]["SCAN_OUTCOME"] == "${{ steps.candidate_scan.outcome }}"
+    assert '--outcome "$SCAN_OUTCOME"' in summary["run"]
 
 
 @pytest.mark.parametrize(
@@ -585,6 +642,7 @@ def test_docker_context_uses_runtime_allowlist():
         "scripts/**",
         "!scripts/*.py",
         "scripts/update_dependencies.py",
+        "scripts/release_version.py",
     ]
 
 
@@ -609,6 +667,7 @@ def test_docker_image_excludes_private_fixture_files(tmp_path):
         "scripts/.env",
         "scripts/credentials.json",
         "scripts/update_dependencies.py",
+        "scripts/release_version.py",
         "config/bot_settings.local.yaml",
         "config/private.yaml",
         "integrations/private.json",

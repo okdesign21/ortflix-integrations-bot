@@ -96,6 +96,33 @@ def test_log_formatter_redacts_tokens_in_messages_and_exceptions(secured_logging
     assert other_token not in text
 
 
+def test_production_startup_redacts_uvicorn_exception_handlers(secured_logging, monkeypatch):
+    bot_module, stream = secured_logging
+    token = "123456:production-logging-synthetic-token"
+    monkeypatch.setattr(bot_module, "TELEGRAM_TOKEN", token)
+    separate_output = io.StringIO()
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        server_logger = logging.getLogger(name)
+        monkeypatch.setattr(server_logger, "handlers", [logging.StreamHandler(separate_output)])
+        monkeypatch.setattr(server_logger, "propagate", False)
+
+    def configure_server(application, **kwargs):
+        bot_module.uvicorn.Config(application, **kwargs)
+        for name in ("uvicorn.error", "uvicorn.access"):
+            try:
+                raise RuntimeError("Synthetic ASGI exception " + token)
+            except RuntimeError:
+                logging.getLogger(name).exception("Synthetic lifespan failure")
+
+    monkeypatch.setattr(bot_module.uvicorn, "run", configure_server)
+    bot_module.main()
+    text = stream.getvalue()
+    assert "Synthetic ASGI exception" in text
+    assert "[REDACTED]" in text
+    assert token not in text
+    assert not separate_output.getvalue()
+
+
 @pytest.mark.asyncio
 async def test_send_photo_or_message_with_photo(mock_telegram_bot, mock_env):
     """Test sending a photo message."""

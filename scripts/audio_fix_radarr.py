@@ -44,8 +44,6 @@ import re
 import subprocess
 import sys
 
-from integration_utils import validate_media_path
-
 # telegram_post is optional when running outside the integrations runtime
 try:
     from integration_utils import (
@@ -416,6 +414,15 @@ def run_radarr_mode():
     if event != "Download":
         print(f"[audio_fix_radarr] Skipping event type: {event!r}")
         sys.exit(0)
+
+    try:
+        from integration_utils import validate_media_path
+    except ImportError:
+        print(
+            "[audio_fix_radarr] Media path validation unavailable; check dependencies.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     try:
         file_path = validate_media_path(

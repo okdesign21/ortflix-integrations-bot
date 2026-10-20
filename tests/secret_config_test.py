@@ -1,6 +1,10 @@
 """Secret file loading and startup configuration regression tests."""
 
+import os
 import runpy
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -52,6 +56,73 @@ def test_environment_fallback(name, monkeypatch):
 
 def test_unconfigured_secret():
     assert load_secret("TELEGRAM_TOKEN") is None
+
+
+@pytest.mark.parametrize("launch", [["-m", "bot"], ["-c", "from bot import main; main()"]])
+def test_executable_startup_reports_secret_file_errors_without_traceback(tmp_path, launch):
+    environment = os.environ.copy()
+    for name in ALL_SECRET_NAMES:
+        environment.pop(name, None)
+        environment.pop(f"{name}_FILE", None)
+    environment.update(
+        TELEGRAM_TOKEN_FILE=str(tmp_path / "synthetic-private-path"),
+        TELEGRAM_TOKEN="synthetic-environment-secret",
+    )
+    result = subprocess.run(
+        [sys.executable, *launch],
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 1
+    assert not result.stdout
+    assert "Configuration error:" in result.stderr
+    assert "TELEGRAM_TOKEN_FILE" in result.stderr
+    assert "mount and permissions" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "synthetic-private-path" not in result.stderr
+    assert "synthetic-environment-secret" not in result.stderr
+
+
+@pytest.mark.parametrize("startup_exit", [0, 1])
+def test_local_launcher_delegates_file_credentials_to_python_once(tmp_path, startup_exit):
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("Requires Bash for launcher validation")
+    launcher = tmp_path / "run-local.sh"
+    shutil.copyfile(Path(__file__).resolve().parents[1] / "run-local.sh", launcher)
+    activate = tmp_path / ".venv" / "bin" / "activate"
+    activate.parent.mkdir(parents=True)
+    activate.write_text(
+        "pip() { return 0; }\n"
+        'python() { printf "%s\\n" "$*" >> "$LAUNCH_LOG"; return "$STARTUP_EXIT"; }\n'
+        'exec() { "$@"; }\n',
+        encoding="utf-8",
+    )
+    log = tmp_path / "launch.log"
+    environment = os.environ.copy()
+    for name in ALL_SECRET_NAMES:
+        environment.pop(name, None)
+        environment.pop(f"{name}_FILE", None)
+    environment.update(
+        TELEGRAM_TOKEN_FILE=str(tmp_path / "telegram-secret"),
+        OVERSEERR_API_KEY_FILE=str(tmp_path / "overseerr-secret"),
+        TELEGRAM_CHAT_ID="12345",
+        LAUNCH_LOG=log.as_posix(),
+        STARTUP_EXIT=str(startup_exit),
+    )
+    result = subprocess.run(
+        [bash, launcher.as_posix(), "run"],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == startup_exit
+    assert log.read_text(encoding="utf-8").splitlines() == ["-m bot"]
+    assert "Missing required environment" not in result.stdout + result.stderr
 
 
 def test_canonical_overseerr_key_precedes_legacy_file(tmp_path, monkeypatch):

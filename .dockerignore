@@ -15,3 +15,4 @@ integrations/**
 scripts/**
 !scripts/*.py
 scripts/update_dependencies.py
+scripts/release_version.py

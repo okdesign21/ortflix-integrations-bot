@@ -1,6 +1,8 @@
 """Media containment checks use temporary files, never native media tools."""
 
+import builtins
 import importlib
+import runpy
 import sys
 from pathlib import Path
 from unittest.mock import Mock
@@ -83,6 +85,29 @@ def test_media_path_rejects_unreadable_files(tmp_path, monkeypatch):
     monkeypatch.setattr("integration_utils.os.access", lambda *args: False)
     with pytest.raises(ValueError, match="readable regular file"):
         validate_media_path(str(media), [str(tmp_path)], {"mkv"})
+
+
+def test_radarr_bulk_fallback_survives_missing_integration_helpers(monkeypatch, capsys):
+    original_import = builtins.__import__
+
+    def without_helpers(name, *args, **kwargs):
+        if name == "integration_utils":
+            raise ImportError("Synthetic standalone environment")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_helpers)
+    monkeypatch.setattr(sys, "argv", ["audio_fix_radarr.py"])
+    namespace = runpy.run_path(str(SCRIPTS_DIR / "audio_fix_radarr.py"))
+    assert namespace["DRY_RUN"] is True
+    assert namespace["env_str"]("SYNTHETIC_MISSING_SETTING", "fallback") == "fallback"
+    monkeypatch.setenv("radarr_eventtype", "Download")
+    tools = Mock()
+    namespace["run_radarr_mode"].__globals__["audio_streams"] = tools
+    with pytest.raises(SystemExit) as error:
+        namespace["run_radarr_mode"]()
+    assert error.value.code == 1
+    tools.assert_not_called()
+    assert "validation unavailable" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("service", ["sonarr", "radarr"])

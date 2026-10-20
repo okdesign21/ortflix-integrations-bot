@@ -329,7 +329,8 @@ and downgrades fail for manual investigation instead of changing the runtime.
 
 No tracked version/digest changes means no PR. New changes refresh the existing
 update PR rather than creating duplicates. Bot-created PRs explicitly dispatch
-the existing lint and security workflows. Dependabot continues weekly application
+the existing lint and security workflows, including a blocking history secret
+scan of the validated base/head commit range. Dependabot continues weekly application
 and GitHub Actions updates, with automatic approval retained; merging is manual.
 Required status checks must be configured in the repository's branch rules.
 

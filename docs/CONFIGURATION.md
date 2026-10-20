@@ -195,6 +195,9 @@ Precedence and failures:
 All explicitly configured supported secret files are checked during bot startup,
 including optional and shadowed aliases. Errors identify the setting without
 including its path or secret contents. Scripts read their files when invoked.
+The native launcher delegates this validation to Python. Invalid explicit files
+exit executable startup with status 1 and an actionable stderr message, without
+an uncaught traceback; the loader still raises a ValueError-compatible exception.
 Secret changes require a bot restart; credentials are not hot-reloaded.
 `TELEGRAM_CHAT_ID` remains a regular environment setting, not a secret credential.
 
@@ -248,6 +251,10 @@ in rendered messages and tracebacks while preserving their existing log format.
 Credentials loaded from secret files are remembered for redaction without reading
 those files again during logging. Environment values and URL-encoded known values
 are also covered.
+
+Executable startup routes Uvicorn error/access logs through those sanitized root
+handlers and disables Uvicorn's default logging reconfiguration. ASGI and lifespan
+exception tracebacks therefore use the same redaction path.
 
 Automatic script output is redacted before logger calls. Manual-action output is
 redacted before truncation and presentation. Launch failures and redownload errors

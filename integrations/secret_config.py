@@ -24,6 +24,10 @@ SECRET_NAMES = frozenset(
 _loaded_secrets: set[str] = set()
 
 
+class SecretConfigurationError(ValueError):
+    """An explicitly configured secret file cannot supply a valid credential."""
+
+
 def redact_diagnostic(text: str, extra_secrets: Iterable[str | None] = ()) -> str:
     """Redact known credentials and credential-bearing diagnostic URL/header fields."""
     values = _loaded_secrets | {os.getenv(name) for name in SECRET_NAMES} | set(extra_secrets)
@@ -68,15 +72,17 @@ def load_secret(name: str) -> str | None:
             _loaded_secrets.add(value)
         return value
     if not file_path.strip():
-        raise ValueError(f"{file_setting} must specify a readable, non-empty UTF-8 secret file")
+        raise SecretConfigurationError(
+            f"{file_setting} must specify a readable, non-empty UTF-8 secret file"
+        )
     try:
         value = Path(file_path).expanduser().read_text(encoding="utf-8").strip()
     except (OSError, UnicodeError, ValueError):
-        raise ValueError(
+        raise SecretConfigurationError(
             f"{file_setting} must reference a readable UTF-8 secret file; "
             "check the mount and permissions"
         ) from None
     if not value:
-        raise ValueError(f"{file_setting} references an empty secret file")
+        raise SecretConfigurationError(f"{file_setting} references an empty secret file")
     _loaded_secrets.add(value)
     return value

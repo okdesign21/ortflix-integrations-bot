@@ -5,6 +5,7 @@ Handles webhooks and callback queries using extensible handler registry.
 
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
 from typing import Optional, cast
@@ -14,16 +15,23 @@ from fastapi import FastAPI
 from telegram import Bot
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 
+from integrations.secret_config import SecretConfigurationError, redact_diagnostic
+
+try:
+    from app_config import (
+        TELEGRAM_PORT,
+        TELEGRAM_TOKEN,
+        WEBHOOK_HOST,
+        WEBHOOK_TOKEN,
+        get_telegram_chat_id,
+        validate_config,
+    )
+except SecretConfigurationError as error:
+    print(f"Configuration error: {error}", file=sys.stderr)
+    raise SystemExit(1) from None
+
 import integrations.media_integrity_integration as media_integrity_integration
 import integrations.telegram_callbacks as telegram_callbacks
-from app_config import (
-    TELEGRAM_PORT,
-    TELEGRAM_TOKEN,
-    WEBHOOK_HOST,
-    WEBHOOK_TOKEN,
-    get_telegram_chat_id,
-    validate_config,
-)
 from integrations.manual_actions import build_manual_actions_markup, manual_actions_help_text
 from integrations.overseerr_integration import call_overseerr  # noqa: F401
 from integrations.overseerr_integration import configure_sender as configure_overseerr_sender
@@ -35,7 +43,6 @@ from integrations.radarr_automation import (
     configure_webhook_token_getter as configure_radarr_token_getter,
 )
 from integrations.radarr_automation import router as radarr_router
-from integrations.secret_config import redact_diagnostic
 from integrations.sonarr_automation import (
     configure_webhook_token_getter as configure_sonarr_token_getter,
 )
@@ -72,6 +79,10 @@ def _configure_logging() -> None:
             )
     for name in ("httpx", "httpcore", "telegram"):
         logging.getLogger(name).setLevel(logging.WARNING)
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        server_logger = logging.getLogger(name)
+        server_logger.handlers.clear()
+        server_logger.propagate = True
 
 
 _configure_logging()
@@ -225,6 +236,7 @@ async def health_check():
 
 def main():
     """Main function to start FastAPI server with integrations support."""
+    _configure_logging()
     logger.info(f"Starting Ortflix Integrations API on {WEBHOOK_HOST}:{TELEGRAM_PORT}")
 
     uvicorn.run(
@@ -232,6 +244,7 @@ def main():
         host=WEBHOOK_HOST,
         port=TELEGRAM_PORT,
         log_level="info",
+        log_config=None,
     )
 
 

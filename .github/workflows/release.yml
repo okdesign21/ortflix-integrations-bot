@@ -22,12 +22,8 @@ jobs:
           fetch-depth: 0
       - name: Require tag higher than all existing versions
         run: |
-          new="${GITHUB_REF_NAME}"
-          highest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -vx "$new" | sort -V | tail -n1 || true)
-          if [ -n "$highest" ] && [ "$(printf '%s\n%s\n' "$highest" "$new" | sort -V | tail -n1)" != "$new" ]; then
-            echo "::error::$new is not higher than existing tag $highest"
-            exit 1
-          fi
+          python -m pip install --constraint build-constraints.txt packaging
+          python scripts/release_version.py check "$GITHUB_REF_NAME"
 
   lint:
     needs: check-version
