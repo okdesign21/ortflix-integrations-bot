@@ -257,51 +257,47 @@ requires an offline import/media smoke check before scanning or publishing that
 image. Rebuild to change Python dependencies; do not install them into a running
 container. OS/media package vulnerabilities remain a separate scan requirement.
 
-### Native Media Toolchain Candidate
+### Native Media Runtime
 
-The image builds FFmpeg 9.0.2 from the [upstream release](https://ffmpeg.org/download.html).
-The media-builder stage runs [docker/build_ffmpeg.sh](docker/build_ffmpeg.sh)
-to verify, compile and package it; the helper is not copied into the runtime image.
-The release signature is verified against the upstream signing-key fingerprint
-`FCF986EA15E6E293A5644F10B4322F04D67658D8` before extracting or compiling it.
-Build tools stay in a separate stage. FFmpeg libraries are linked statically into
-the two CLI programs; libc and zlib remain system runtime dependencies. External
-library autodetection, network support, playback and hardware capture devices are
-disabled. Built-in decoders, parsers, demuxers and muxers remain available for local
-probing and stream-copy remuxing. PCM and ALAC encoders support synthetic smoke
-fixtures; this is not a general-purpose transcoding image.
+The image uses the digest-pinned official `opensuse/tumbleweed` image and installs
+Python 3.14, FFmpeg, MKVToolNix and their runtime libraries together with `zypper`.
+There are no copied third-party binaries or locally compiled media packages.
+RPM package signatures are checked by the package manager, and the installed
+RPM database is retained for vulnerability scanning. Explicit package pins
+select FFmpeg 8.1.3, MKVToolNix 102.0 and libxml2 2.15.4, together with updated
+Qt, util-linux, systemd, ncurses and ACL libraries.
 
-The binaries are installed as a local Debian package with source identity `ffmpeg`
-and version `7:9.0.2-0ortflix1`, not as an official Debian backport. Package metadata
-remains available to Trivy. The signed source archive, signature, public key,
-license and configure log are retained under `/usr/local/share/ffmpeg/`.
-The runtime build rejects installed Debian libav/swscale/swresample packages
-instead of leaving the old FFmpeg dependency tree beside new binaries.
-MKVToolNix continues to use Debian's pinned package and runtime dependencies.
-Its required dependency chain is `mkvtoolnix` -> `libqt6core6t64` ->
-`shared-mime-info` -> `libxml2`, even with `--no-install-recommends`.
-The build therefore does not reject libxml2 merely for being installed; the
-unchanged blocking Trivy scan assesses its vulnerabilities. This FFmpeg change
-does not remediate the remaining Debian libxml2 findings.
+Current CI validates Linux x86-64 (amd64). Other architectures offered by the
+upstream base have not been certified for this application.
+Tumbleweed is a rolling distribution. Update the pinned base digest and direct
+RPM versions together when refreshing the runtime; mirror rotation can remove
+old package revisions and intentionally cause a stale build to fail. Transitive
+dependencies are resolved by the vendor package manager. Build with
+`--pull --no-cache` to avoid reusing a cached installation layer. The resolved
+image, not its source recipe alone, is the security artifact.
+
+Build and runtime stages share the same native package baseline. Only the
+builder installs pip and creates a temporary build environment; the final stage
+receives installed application packages, not pip, the wheelhouse or build tools.
+The bot entrypoint, media mounts and root execution policy are unchanged.
 
 P3-006 remains open until an actual image build, offline smoke check and blocking
 Trivy scan pass. The smoke check covers Matroska probe/language edits and MP4
 stream-copy language edits, without networking or host volumes:
 
 ```bash
-docker build --pull -t ortflix-bot-addons:scan .
+docker build --pull --no-cache -t ortflix-bot-addons:scan .
 docker run --rm --network none --entrypoint python ortflix-bot-addons:scan -m scripts.check_runtime_image
 python scripts/scan_image.py ortflix-bot-addons:scan
 ```
 
-Compare the rebuilt package/CVE inventory, including util-linux, MKVToolNix and
-other base libraries. Fewer findings alone do not establish remediation: confirm
-that the scanner inventories the local FFmpeg package, assess upstream advisories
-for its embedded libraries, and distinguish local fixes from Debian vendor status.
-An image scan may still report Debian advisories against this local source build.
-Do not suppress these findings or enable `ignore-unfixed` to force publication.
-Changing `FFMPEG_VERSION` requires the same signature, compatibility and security
-checks; a newer version alone is not proof of a patched image.
+The local scan command and CI require Trivy to recognize `opensuse-tumbleweed`
+and report the Python, FFmpeg, MKVToolNix and libxml2 RPM packages. Missing native
+scan coverage fails closed, even when the scanner reports no vulnerabilities.
+Fewer findings alone do not establish remediation.
+Do not remove package metadata, suppress findings or enable `ignore-unfixed`
+to force publication. CI scans and publishes the same candidate image without
+rebuilding it; a newer package version alone is not proof of a patched image.
 
 Use `config/bot_settings.yaml` for default service URLs and Plex settings in Docker
 deployments. Keep environment variables for secrets and per-container overrides only.

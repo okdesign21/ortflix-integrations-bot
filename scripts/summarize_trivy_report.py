@@ -12,6 +12,35 @@ from typing import Any
 MAX_VULNERABILITY_DETAILS = 500
 MAX_SECRET_DETAILS = 30
 _SAFE_TEXT = re.compile(r"[^A-Za-z0-9_.+:@/-]")
+RUNTIME_OS = "opensuse-tumbleweed"
+RUNTIME_PACKAGES = frozenset({"python314-base", "ffmpeg-8", "mkvtoolnix", "libxml2-16"})
+
+
+def validate_runtime_inventory(report_path: Path) -> None:
+    """Reject a clean-looking scan that missed the native runtime packages."""
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raise ValueError("Native inventory report unavailable or invalid.") from None
+    metadata = report.get("Metadata") if isinstance(report, dict) else None
+    operating_system = metadata.get("OS") if isinstance(metadata, dict) else None
+    if not isinstance(operating_system, dict) or operating_system.get("Family") != RUNTIME_OS:
+        raise ValueError("Trivy did not recognize the expected native runtime OS.")
+    results = report.get("Results")
+    if not isinstance(results, list):
+        raise ValueError("Trivy report has no valid native package results.")
+    packages = {
+        package.get("Name")
+        for result in results
+        if isinstance(result, dict)
+        and result.get("Class") == "os-pkgs"
+        and result.get("Type") == RUNTIME_OS
+        for package in result.get("Packages") or []
+        if isinstance(package, dict) and isinstance(package.get("Name"), str)
+    }
+    missing = RUNTIME_PACKAGES - packages
+    if missing:
+        raise ValueError("Trivy native inventory is incomplete: " + ", ".join(sorted(missing)))
 
 
 def _safe_text(value: Any, limit: int = 100) -> str:
@@ -136,8 +165,20 @@ def main() -> int:
     parser.add_argument("report", type=Path)
     parser.add_argument("--kind", choices=("repository", "image"), required=True)
     parser.add_argument("--outcome", default="unknown")
+    parser.add_argument(
+        "--require-native-runtime",
+        action="store_true",
+        help="Fail unless the image report inventories the expected OS and native media packages",
+    )
     args = parser.parse_args()
     print(summarize_report(args.report, args.kind, args.outcome))
+    if args.require_native_runtime:
+        try:
+            validate_runtime_inventory(args.report)
+        except ValueError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        print("Native runtime inventory verified.")
     return 0
 
 

@@ -76,6 +76,8 @@ jobs:
       - name: Run Trivy scan on built image
         id: trivy_image
         uses: aquasecurity/trivy-action@master
+        env:
+          TRIVY_LIST_ALL_PKGS: 'true'
         with:
           image-ref: 'ortflix-bot-addons:scan'
           format: 'json'
@@ -91,5 +93,5 @@ jobs:
         run: >-
           python scripts/summarize_trivy_report.py
           "${{ runner.temp }}/image-security.json"
-          --kind image --outcome "$SCAN_OUTCOME"
+          --kind image --outcome "$SCAN_OUTCOME" --require-native-runtime
           >> "$GITHUB_STEP_SUMMARY"

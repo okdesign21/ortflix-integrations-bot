@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 try:
-    from .summarize_trivy_report import summarize_report
+    from .summarize_trivy_report import summarize_report, validate_runtime_inventory
 except ImportError:  # Running as `python scripts/scan_image.py`.
-    from summarize_trivy_report import summarize_report
+    from summarize_trivy_report import summarize_report, validate_runtime_inventory
 
 
 class CommandResult(Protocol):
@@ -39,6 +39,7 @@ def scan_image(
             "--severity",
             "CRITICAL,HIGH",
             "--ignore-unfixed=false",
+            "--list-all-pkgs",
             "--exit-code",
             "1",
             "--format",
@@ -58,6 +59,12 @@ def scan_image(
 
         outcome = "success" if result.returncode == 0 else "failure"
         print(summarize_report(report, "image", outcome))
+        if result.returncode == 0:
+            try:
+                validate_runtime_inventory(report)
+            except ValueError as error:
+                print(str(error), file=sys.stderr)
+                return 1
         return result.returncode
 
 

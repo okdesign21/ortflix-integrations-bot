@@ -1,4 +1,18 @@
-FROM python:3.14-slim-trixie AS builder
+FROM opensuse/tumbleweed@sha256:1978f5879b857f41ec7cb6e4b5dfe6324acb90491d6179aee218190bb0315a8f AS base
+
+ENV PATH=/usr/local/bin:$PATH
+
+RUN zypper --non-interactive install --no-recommends \
+        python314-base=3.14.8-1.1 ffmpeg-8=8.1.3-3.1 mkvtoolnix=102.0-1.2 \
+        libxml2-16=2.15.4-1.1 libQt6Core6=6.11.2-2.1 util-linux=2.42.4-1.1 \
+        libsystemd0=261.3-1.1 libncurses6=6.6.20260926-115.1 libacl1=2.4.0-1.2 \
+        ca-certificates=2+git20260727.241e0ff-1.1 && \
+    zypper clean --all && \
+    mkdir -p /usr/local/bin && \
+    ln -s /usr/bin/python3.14 /usr/local/bin/python && \
+    rm -rf /usr/lib/python*/ensurepip /usr/lib64/python*/ensurepip
+
+FROM base AS builder
 
 WORKDIR /build
 
@@ -9,45 +23,21 @@ COPY integrations ./integrations
 ARG APP_VERSION=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${APP_VERSION}
 
-RUN python -m pip install --no-cache-dir --upgrade --constraint build-constraints.txt pip setuptools wheel && \
-    python -m pip wheel --no-cache-dir --build-constraint build-constraints.txt --wheel-dir /wheels .
+RUN zypper --non-interactive install --no-recommends python314-pip=26.2.1-2.1 && \
+    zypper clean --all && \
+    python -m venv --without-pip /build-env && \
+    python -m pip --python /build-env install --no-cache-dir --upgrade \
+        --constraint build-constraints.txt pip setuptools wheel && \
+    /build-env/bin/python -m pip wheel --no-cache-dir \
+        --build-constraint build-constraints.txt --wheel-dir /wheels . && \
+    /build-env/bin/python -m pip install --no-cache-dir \
+        --no-index --find-links=/wheels --prefix=/install /wheels/ortflix_integrations-*.whl
 
-FROM python:3.14-slim-trixie AS media-builder
-
-WORKDIR /build/ffmpeg
-
-ARG FFMPEG_VERSION=9.0.2
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    build-essential=* ca-certificates=* curl=* gnupg=* nasm=* pkg-config=* xz-utils=* zlib1g-dev=* && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY docker/build_ffmpeg.sh /build/build_ffmpeg.sh
-RUN sh /build/build_ffmpeg.sh "$FFMPEG_VERSION"
-
-FROM python:3.14-slim-trixie AS runtime
+FROM base AS runtime
 
 WORKDIR /app
 
-COPY --from=media-builder /ffmpeg.deb /tmp/ffmpeg.deb
-
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
-    mkvtoolnix=92.0-1 /tmp/ffmpeg.deb && \
-    dpkg-query -W -f='${binary:Package} ${db:Status-Status}\n' > /tmp/runtime-packages && \
-    if grep -E '^(libav(codec|device|filter|format|util)[^ ]*|libsw(resample|scale)[^ ]*) installed$' /tmp/runtime-packages; then \
-        echo 'Unexpected Debian media runtime dependency' >&2; exit 1; \
-    fi && \
-    rm /tmp/runtime-packages /tmp/ffmpeg.deb && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder /wheels /wheels
-
-RUN python -m pip install --no-cache-dir --no-index --find-links=/wheels /wheels/ortflix_integrations-*.whl && \
-    python -m pip uninstall --yes pip setuptools wheel && \
-    rm -rf /wheels /usr/local/lib/python*/ensurepip
+COPY --from=builder /install/ /usr/
 
 COPY *.py ./
 COPY config ./config

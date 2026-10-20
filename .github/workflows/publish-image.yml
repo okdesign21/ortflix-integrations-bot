@@ -68,6 +68,8 @@ jobs:
           "$IMAGE_ID" -m scripts.check_runtime_image
       - name: Gate the exact candidate on vulnerabilities and secrets
         uses: aquasecurity/trivy-action@master
+        env:
+          TRIVY_LIST_ALL_PKGS: 'true'
         with:
           image-ref: ${{ steps.build.outputs.imageid }}
           format: json
@@ -76,6 +78,12 @@ jobs:
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: false
           exit-code: '1'
+      - name: Verify native runtime scan coverage
+        run: >-
+          python scripts/summarize_trivy_report.py
+          "${{ runner.temp }}/candidate-security.json"
+          --kind image --outcome success --require-native-runtime
+          >> "$GITHUB_STEP_SUMMARY"
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
         with:

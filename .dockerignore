@@ -2,9 +2,6 @@
 !pyproject.toml
 !build-constraints.txt
 !README.md
-!docker
-docker/**
-!docker/build_ffmpeg.sh
 !bot.py
 !app_config.py
 !__init__.py

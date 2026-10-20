@@ -16,16 +16,15 @@ from packaging.version import Version
 
 from scripts.check_runtime_image import check_media_tools, check_python_runtime
 from scripts.scan_image import scan_image
-from scripts.summarize_trivy_report import summarize_report
+from scripts.summarize_trivy_report import summarize_report, validate_runtime_inventory
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_image_build_tools_and_isolated_build_use_patched_baselines():
     dockerfile = (PROJECT_ROOT / "dockerfile").read_text(encoding="utf-8")
-    assert dockerfile.startswith("FROM python:3.14-slim-trixie AS builder\n")
-    assert "apt-get update &&" in dockerfile
-    assert "apt-get upgrade -y &&" in dockerfile
+    assert dockerfile.startswith("FROM opensuse/tumbleweed@sha256:")
+    assert "zypper --non-interactive install --no-recommends" in dockerfile
     requirements = [
         Requirement(line)
         for line in (PROJECT_ROOT / "build-constraints.txt")
@@ -54,40 +53,33 @@ def test_image_build_tools_and_isolated_build_use_patched_baselines():
         assert pins[requirement.name] in requirement.specifier
 
 
-def test_media_build_avoids_debian_ffmpeg_and_external_libraries():
+def test_media_runtime_uses_vendor_packages_and_preserves_inventory():
     dockerfile = (PROJECT_ROOT / "dockerfile").read_text(encoding="utf-8")
-    media, runtime = dockerfile.split("FROM python:3.14-slim-trixie AS runtime\n")
-    helper = (PROJECT_ROOT / "docker" / "build_ffmpeg.sh").read_text(encoding="utf-8")
-    assert "AS media-builder" in media
-    assert "COPY docker/build_ffmpeg.sh /build/build_ffmpeg.sh" in media
-    assert 'RUN sh /build/build_ffmpeg.sh "$FFMPEG_VERSION"' in media
-    assert "!docker/build_ffmpeg.sh" in (PROJECT_ROOT / ".dockerignore").read_text()
-    assert helper.startswith("#!/bin/sh\nset -eu\n")
-    assert "https://ffmpeg.org/releases/ffmpeg-" in helper
-    assert "gpg --batch --verify" in helper
-    assert "FCF986EA15E6E293A5644F10B4322F04D67658D8" in helper
-    assert helper.index("gpg --batch --verify") < helper.index("tar -xJf")
-    for option in ("--disable-autodetect", "--disable-network", "--disable-shared"):
-        assert option in helper
-    assert "COPY --from=media-builder /ffmpeg.deb /tmp/ffmpeg.deb" in runtime
-    assert "'Package: ffmpeg' 'Source: ffmpeg'" in helper
-    assert '"Version: 7:${FFMPEG_VERSION}-0ortflix1"' in helper
-    assert "dpkg-deb --root-owner-group --build" in helper
-    assert "dpkg-query -W" in runtime
-    assert "Unexpected Debian media runtime dependency" in runtime
-    assert "libxml2[^ ]*" not in runtime
-    assert "ffmpeg=" not in runtime
-    assert "libavcodec" not in runtime
+    base, stages = dockerfile.split("FROM base AS builder\n")
+    for package in (
+        "python314-base=3.14.8-1.1",
+        "ffmpeg-8=8.1.3-3.1",
+        "mkvtoolnix=102.0-1.2",
+        "libxml2-16=2.15.4-1.1",
+        "ca-certificates",
+    ):
+        assert package in base
+    assert "FROM base AS runtime" in stages
+    for obsolete in ("apt-get", "media-builder", "ffmpeg.deb", "build_ffmpeg.sh"):
+        assert obsolete not in dockerfile
+    for inventory in ("/var/lib/rpm", "/usr/lib/sysimage/rpm"):
+        assert inventory not in dockerfile
 
 
 def test_runtime_image_does_not_retain_build_tooling():
     dockerfile = (PROJECT_ROOT / "dockerfile").read_text(encoding="utf-8")
-    builder, runtime = dockerfile.split("FROM python:3.14-slim-trixie AS runtime\n")
+    builder, runtime = dockerfile.split("FROM base AS runtime\n")
     assert "python -m pip wheel" in builder
-    assert "COPY --from=builder /wheels /wheels" in runtime
-    assert "--no-index --find-links=/wheels /wheels/ortflix_integrations-*.whl" in runtime
-    assert "python -m pip uninstall --yes pip setuptools wheel" in runtime
-    assert "rm -rf /wheels /usr/local/lib/python*/ensurepip" in runtime
+    assert "--no-index --find-links=/wheels --prefix=/install" in builder
+    assert "COPY --from=builder /install/ /usr/" in runtime
+    assert "rm -rf /usr/lib/python*/ensurepip" in builder
+    for build_only in ("python314-pip", "/build-env", "/wheels"):
+        assert build_only not in runtime
     assert "--upgrade" not in runtime
     assert "build-constraints.txt" not in runtime
     assert 'ENTRYPOINT ["python", "-m", "bot"]' in runtime
@@ -167,6 +159,9 @@ def test_image_scan_requires_offline_runtime_smoke(filename, job):
     assert "--volume" not in smoke["run"] and " -v " not in smoke["run"]
     assert "continue-on-error" not in smoke and "if" not in smoke
     assert steps.index(smoke) < steps.index(scan)
+    assert scan["env"]["TRIVY_LIST_ALL_PKGS"] == "true"
+    coverage = next(step for step in steps if "--require-native-runtime" in step.get("run", ""))
+    assert steps.index(scan) < steps.index(coverage)
 
 
 def test_ci_uses_central_build_tool_constraints():
@@ -241,13 +236,69 @@ def test_local_image_scan_uses_ci_policy_and_summarizes_findings(capsys, tmp_pat
     assert "Trivy image scan (sanitized)" in output
 
 
-def test_local_image_scan_returns_success_and_handles_missing_trivy(capsys):
-    success = scan_image(
+def runtime_inventory():
+    return {
+        "Metadata": {"OS": {"Family": "opensuse-tumbleweed"}},
+        "Results": [
+            {
+                "Class": "os-pkgs",
+                "Type": "opensuse-tumbleweed",
+                "Packages": [
+                    {"Name": name}
+                    for name in ("python314-base", "ffmpeg-8", "mkvtoolnix", "libxml2-16")
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "missing", [None, "python314-base", "ffmpeg-8", "mkvtoolnix", "libxml2-16"]
+)
+def test_runtime_inventory_requires_native_os_and_media_packages(tmp_path, missing):
+    data = runtime_inventory()
+    if missing:
+        packages = data["Results"][0]["Packages"]
+        data["Results"][0]["Packages"] = [item for item in packages if item["Name"] != missing]
+    report = tmp_path / "image.json"
+    report.write_text(json.dumps(data), encoding="utf-8")
+    if missing:
+        with pytest.raises(ValueError, match="incomplete"):
+            validate_runtime_inventory(report)
+    else:
+        validate_runtime_inventory(report)
+
+
+@pytest.mark.parametrize("data", [{}, {"Metadata": {"OS": {"Family": "arch"}}}])
+def test_runtime_inventory_rejects_missing_or_unsupported_os(tmp_path, data):
+    report = tmp_path / "image.json"
+    report.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="expected native runtime OS"):
+        validate_runtime_inventory(report)
+
+
+def test_local_image_scan_rejects_missing_report(capsys):
+    result = scan_image(
         "ortflix-bot-addons:scan",
         run=lambda command, check: subprocess.CompletedProcess(command, 0),
     )
+    assert result == 1
+    assert "Native inventory report unavailable" in capsys.readouterr().err
+
+
+def test_local_image_scan_returns_success_and_handles_missing_trivy(capsys):
+    def clean_scan(command, check):
+        assert "--list-all-pkgs" in command
+        report = Path(command[command.index("--output") + 1])
+        report.write_text(json.dumps(runtime_inventory()), encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0)
+
+    success = scan_image(
+        "ortflix-bot-addons:scan",
+        run=clean_scan,
+    )
     assert success == 0
-    assert "Report unavailable or invalid" in capsys.readouterr().out
+    assert "No HIGH/CRITICAL findings" in capsys.readouterr().out
 
     def missing(command, check):
         raise FileNotFoundError(command[0])
@@ -476,9 +527,6 @@ def test_docker_context_uses_runtime_allowlist():
         "!pyproject.toml",
         "!build-constraints.txt",
         "!README.md",
-        "!docker",
-        "docker/**",
-        "!docker/build_ffmpeg.sh",
         "!bot.py",
         "!app_config.py",
         "!__init__.py",
@@ -508,7 +556,6 @@ def test_docker_image_excludes_private_fixture_files(tmp_path):
         "build-constraints.txt",
         "README.md",
         "config/bot_settings.yaml",
-        "docker/build_ffmpeg.sh",
     ]
     included += ["integrations/handler.py", "scripts/action.py"]
     excluded = [
@@ -519,6 +566,7 @@ def test_docker_image_excludes_private_fixture_files(tmp_path):
         "config/private.yaml",
         "integrations/private.json",
         "docker/private.env",
+        "docker/build_ffmpeg.sh",
         "tests/private.py",
         "private.py",
     ]
