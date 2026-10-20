@@ -1,23 +1,48 @@
-FROM python:3.14-slim
+FROM opensuse/tumbleweed@sha256:1978f5879b857f41ec7cb6e4b5dfe6324acb90491d6179aee218190bb0315a8f AS base
+
+ENV PATH=/usr/local/bin:$PATH
+
+RUN zypper --non-interactive install --no-recommends \
+        python314-base=3.14.8-1.1 ffmpeg-8=8.1.3-3.1 mkvtoolnix=102.0-1.2 \
+        libxml2-16=2.15.4-1.1 libQt6Core6=6.11.2-2.1 util-linux=2.42.4-1.1 \
+        libsystemd0=261.3-1.1 libncurses6=6.6.20260926-115.1 libacl1=2.4.0-1.2 \
+        ca-certificates=2+git20260727.241e0ff-1.1 && \
+    zypper clean --all && \
+    mkdir -p /usr/local/bin && \
+    ln -s /usr/bin/python3.14 /usr/local/bin/python && \
+    rm -rf /usr/lib/python*/ensurepip /usr/lib64/python*/ensurepip
+
+FROM base AS builder
+
+WORKDIR /build
+
+COPY pyproject.toml build-constraints.txt README.md ./
+COPY *.py ./
+COPY integrations ./integrations
+
+ARG APP_VERSION=0.0.0
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${APP_VERSION}
+
+RUN zypper --non-interactive install --no-recommends python314-pip=26.2.1-2.1 && \
+    zypper clean --all && \
+    python -m venv --without-pip /build-env && \
+    python -m pip --python /build-env install --no-cache-dir --upgrade \
+        --constraint build-constraints.txt pip setuptools wheel && \
+    /build-env/bin/python -m pip wheel --no-cache-dir \
+        --build-constraint build-constraints.txt --wheel-dir /wheels . && \
+    /build-env/bin/python -m pip install --no-cache-dir \
+        --no-index --find-links=/wheels --prefix=/install /wheels/ortflix_integrations-*.whl
+
+FROM base AS runtime
 
 WORKDIR /app
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    ffmpeg=7:7.1.5-0+deb13u1 \
-    mkvtoolnix=92.0-1 && \
-    rm -rf /var/lib/apt/lists/*
+COPY --from=builder /install/ /usr/
 
-# Copy project files
-COPY pyproject.toml .
 COPY *.py ./
 COPY config ./config
 COPY integrations ./integrations
 COPY scripts ./scripts
-
-# Install build dependencies and package
-RUN pip install --no-cache-dir --upgrade pip==24.3.1 setuptools==75.6.0 wheel==0.45.1 && \
-    pip install --no-cache-dir .
 
 EXPOSE 7777
 

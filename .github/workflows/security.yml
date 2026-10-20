@@ -9,8 +9,17 @@ on:
       - '**'
   pull_request:
   workflow_dispatch:
+    inputs:
+      history_base:
+        description: 'Full base commit SHA for an automated update history scan'
+        type: string
+        required: false
+      history_head:
+        description: 'Full head commit SHA for an automated update history scan'
+        type: string
+        required: false
   schedule:
-    - cron: '0 3 * * 0'
+    - cron: '0 3 * * *'
 
 permissions:
   contents: read
@@ -20,33 +29,61 @@ concurrency:
 
 jobs:
   trufflehog:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: >-
+      ${{ github.event_name == 'pull_request' ||
+          (github.event_name == 'workflow_dispatch' &&
+           (inputs.history_base != '' || inputs.history_head != '')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || inputs.history_head || github.sha }}
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@main
-        with:
-          path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
-          extra_args: --only-verified
+        env:
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha || inputs.history_base }}
+          HEAD_COMMIT: ${{ github.event.pull_request.head.sha || inputs.history_head }}
+        run: |
+          [[ "$BASE_COMMIT" =~ ^[0-9a-f]{40}$ && "$HEAD_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+            echo '::error::History scan requires full base and head commit SHAs'
+            exit 1
+          }
+          git cat-file -e "$BASE_COMMIT^{commit}"
+          git cat-file -e "$HEAD_COMMIT^{commit}"
+          [[ "$(git rev-parse HEAD)" == "$HEAD_COMMIT" ]] || {
+            echo '::error::Checked-out commit differs from requested history head'
+            exit 1
+          }
+          docker run --rm -v "$PWD:/repo:ro" \
+            ghcr.io/trufflesecurity/trufflehog:latest git file:///repo/ \
+            --since-commit "$BASE_COMMIT" --branch "$HEAD_COMMIT" \
+            --no-verification --fail --json > "$RUNNER_TEMP/history-secrets.json"
 
   trivy-fs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: Run Trivy vulnerability scan on repository
+        id: trivy_fs
         uses: aquasecurity/trivy-action@master
-        continue-on-error: true
         with:
           scan-type: 'fs'
           scan-ref: '.'
-          format: 'table'
+          format: 'json'
+          output: '${{ runner.temp }}/repository-security.json'
+          scanners: 'vuln,secret'
+          ignore-unfixed: false
           severity: 'CRITICAL,HIGH'
-          exit-code: '0'
+          exit-code: '1'
+      - name: Summarize repository scan safely
+        if: always()
+        env:
+          SCAN_OUTCOME: ${{ steps.trivy_fs.outcome }}
+        run: >-
+          python scripts/summarize_trivy_report.py
+          "${{ runner.temp }}/repository-security.json"
+          --kind repository --outcome "$SCAN_OUTCOME"
+          >> "$GITHUB_STEP_SUMMARY"
 
   trivy-image:
     runs-on: ubuntu-latest
@@ -55,12 +92,29 @@ jobs:
       - name: Build Docker image for Integrations service
         run: |
           docker build -t ortflix-bot-addons:scan .
+      - name: Check runtime without network or host media
+        run: >-
+          docker run --rm --network none --entrypoint python
+          ortflix-bot-addons:scan -m scripts.check_runtime_image
       - name: Run Trivy scan on built image
+        id: trivy_image
         uses: aquasecurity/trivy-action@master
-        continue-on-error: true
+        env:
+          TRIVY_LIST_ALL_PKGS: 'true'
         with:
           image-ref: 'ortflix-bot-addons:scan'
-          format: 'table'
-          ignore-unfixed: true
+          format: 'json'
+          output: '${{ runner.temp }}/image-security.json'
+          scanners: 'vuln,secret'
+          ignore-unfixed: false
           severity: 'CRITICAL,HIGH'
-          exit-code: '0'
+          exit-code: '1'
+      - name: Summarize image scan safely
+        if: always()
+        env:
+          SCAN_OUTCOME: ${{ steps.trivy_image.outcome }}
+        run: >-
+          python scripts/summarize_trivy_report.py
+          "${{ runner.temp }}/image-security.json"
+          --kind image --outcome "$SCAN_OUTCOME" --require-native-runtime
+          >> "$GITHUB_STEP_SUMMARY"

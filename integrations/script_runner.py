@@ -1,8 +1,46 @@
 """Shared async subprocess runner for integration scripts."""
 
 import asyncio
+import os
+import signal
 import sys
 from pathlib import Path
+
+from .secret_config import redact_diagnostic
+
+PROCESS_TERMINATION_GRACE_SECONDS = 5
+
+
+def _signal_process(process: asyncio.subprocess.Process, *, force: bool = False) -> None:
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+        elif process.returncode is None:
+            if force:
+                process.kill()
+            else:
+                process.terminate()
+    except ProcessLookupError:
+        pass
+
+
+async def communicate_with_timeout(
+    process: asyncio.subprocess.Process, timeout_seconds: int
+) -> tuple[bytes, bytes]:
+    """Stop and reap the isolated child before propagating timeout or cancellation."""
+    try:
+        return await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        try:
+            _signal_process(process)
+            await asyncio.wait_for(process.communicate(), timeout=PROCESS_TERMINATION_GRACE_SECONDS)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            _signal_process(process, force=True)
+            await process.communicate()
+            await process.wait()
+        raise
 
 
 async def run_python_script(
@@ -30,17 +68,23 @@ async def run_python_script(
             env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=os.name == "posix",
         )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+        stdout, stderr = await communicate_with_timeout(process, timeout_seconds)
     except asyncio.TimeoutError:
         logger.error("%s script timed out after %ss: %s", log_prefix, timeout_seconds, script_name)
         return
     except Exception as err:
-        logger.error("%s script failed to launch (%s): %s", log_prefix, script_name, err)
+        logger.error(
+            "%s script failed to launch (%s): %s",
+            log_prefix,
+            script_name,
+            redact_diagnostic(str(err)),
+        )
         return
 
-    out = (stdout or b"").decode("utf-8", errors="replace").strip()
-    err = (stderr or b"").decode("utf-8", errors="replace").strip()
+    out = redact_diagnostic((stdout or b"").decode("utf-8", errors="replace").strip())
+    err = redact_diagnostic((stderr or b"").decode("utf-8", errors="replace").strip())
 
     if process.returncode == 0:
         logger.info("%s script succeeded: %s", log_prefix, script_name)

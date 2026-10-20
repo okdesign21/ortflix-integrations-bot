@@ -82,39 +82,8 @@ case "$COMMAND" in
     ruff check --fix .
     ;;
   run)
-    # Basic validation for running the bot
-    if [ -z "$TELEGRAM_TOKEN" ] || [ -z "$OVERSEERR_API_KEY" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-      echo "❌ Missing required environment variables!"
-      echo ""
-      echo "Please set up one of the following:"
-      echo "  1. Create a .env file (recommended for local testing)"
-      echo "     cp .env.example .env"
-      echo "     # Then edit .env with your values"
-      echo ""
-      echo "  2. Provide files in ../docker_secrets:"
-      echo "     - telegram_bot_token"
-      echo "     - overseerr_api_key"
-      echo "     - telegram_chat_id"
-      echo ""
-      echo "Current values:"
-      [ -z "$TELEGRAM_TOKEN" ] && echo "  ❌ TELEGRAM_TOKEN = (missing)" || echo "  ✅ TELEGRAM_TOKEN = (set)"
-      [ -z "$OVERSEERR_API_KEY" ] && echo "  ❌ OVERSEERR_API_KEY = (missing)" || echo "  ✅ OVERSEERR_API_KEY = (set)"
-      [ -z "$TELEGRAM_CHAT_ID" ] && echo "  ❌ TELEGRAM_CHAT_ID = (missing)" || echo "  ✅ TELEGRAM_CHAT_ID = $TELEGRAM_CHAT_ID"
-      exit 1
-    fi
-
-    echo "✅ Configuration validated"
-    echo ""
-    echo "📱 Telegram Bot Configuration:"
-    echo "   Webhook: http://$WEBHOOK_HOST:$WEBHOOK_PORT$WEBHOOK_PATH"
-    echo "   Overseerr: $OVERSEERR_URL"
-    echo ""
-    echo "🚀 Starting bot..."
-    echo ""
-
-    # Try running as package module (if installed or running from parent), then try top-level module, then fallback to script
-    # This avoids ModuleNotFoundError when running from inside the `telegram_bot` directory.
-    python -m telegram_bot.bot 2>/dev/null || python -m bot 2>/dev/null || python bot.py
+    echo "Starting bot; Python validates credentials and secret files." >&2
+    exec python -m bot
     ;;
   *)
     echo "Unknown command: $COMMAND"
