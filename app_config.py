@@ -123,7 +123,9 @@ def _get_service_url(
 
 
 # Service URLs (for both bot and script usage)
-OVERSEERR_URL = _get_service_url("OVERSEERR_URL", "overseerr", "overseerr", 5055, legacy_env_var="SEERR_URL")
+OVERSEERR_URL = _get_service_url(
+    "OVERSEERR_URL", "overseerr", "overseerr", 5055, legacy_env_var="SEERR_URL"
+)
 RADARR_URL = _get_service_url("RADARR_URL", "radarr", "radarr", 7878)
 SONARR_URL = _get_service_url("SONARR_URL", "sonarr", "sonarr", 8989)
 
