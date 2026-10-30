@@ -331,6 +331,7 @@ def read_overseerr_api_key() -> str | None:
     key = _env("OVERSEERR_API_KEY") or _env("SEERR_API_KEY") or _env("API_KEY")
     return key or None
 
+
 def overseerr_api_key() -> str:
     """Get the Overseerr API key from env, exiting if it is missing."""
     key = read_overseerr_api_key()
