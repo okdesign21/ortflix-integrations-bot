@@ -129,10 +129,10 @@ Useful env vars:
 2. `SONARR_AUDIO_DEFAULT_LANG`
 3. `SONARR_SDR_ROOT`, `SONARR_HDR_ROOT`, `SONARR_HDR_PROFILE_KEYWORDS`
 
-## Configure Radarr/Sonarr Webhooks As Code
+## Configure Radarr/Sonarr/Seerr Webhooks As Code
 
-Instead of the UI steps above, the Radarr and Sonarr webhook connections can be declared in
-`config/arr_webhooks.yaml` and applied through their APIs:
+Instead of the UI steps above, the Radarr and Sonarr webhook connections and the Seerr webhook
+agent can be declared in `config/arr_webhooks.yaml` and applied through their APIs:
 
 ```bash
 python scripts/configure_arr_webhooks.py            # dry run, prints the diff
@@ -141,14 +141,18 @@ python scripts/configure_arr_webhooks.py --apply    # writes changes
 
 1. Only connections named in the file are managed; other connections (Plex, Telegram, custom
    scripts) are never changed or deleted. Use `--config PATH` for a different file and
-   `--app radarr|sonarr` to limit the run.
-2. `RADARR_API_KEY`/`SONARR_API_KEY` (or their `_FILE` forms) and the service URLs follow the same
-   resolution as the other scripts.
-3. If `WEBHOOK_TOKEN` (or `WEBHOOK_TOKEN_FILE`) is set, an `x-webhook-token` header is configured.
-   An existing header that the settings do not declare is reported as a difference. Header
-   values are never printed.
-4. The committed file was derived from the connections on the live server (no auth header);
-   review the first dry run before applying.
+   `--app radarr|sonarr|seerr|all` to limit the run. Apps absent from the file are skipped.
+2. `RADARR_API_KEY`/`SONARR_API_KEY`/`OVERSEERR_API_KEY` (or their `_FILE` forms) and the
+   service URLs follow the same resolution as the other scripts.
+3. Seerr has one webhook agent: declare `enabled`, `embed_poster`, `url` and `events`
+   (notification type names such as `MEDIA_PENDING`). `json_payload_file` is read relative to the
+   config file; omit it to keep the existing payload. Other Seerr options are preserved.
+4. If `WEBHOOK_TOKEN` (or `WEBHOOK_TOKEN_FILE`) is set, an `x-webhook-token` header is configured.
+   An existing header that the settings do not declare is reported as a difference.
+5. URLs, header values and API keys are never printed; changed URLs are reported as
+   `url: changed`.
+6. The committed file was derived from the live server (no auth header); review the first dry run
+   before applying.
 
 ## Tautulli
 

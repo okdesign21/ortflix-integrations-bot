@@ -1,7 +1,7 @@
-# Desired Radarr/Sonarr webhook connections, applied by scripts/configure_arr_webhooks.py.
+# Desired Radarr/Sonarr/Seerr webhook connections, applied by scripts/configure_arr_webhooks.py.
 # Only connections named here are managed; other connections are never changed or deleted.
 # If WEBHOOK_TOKEN (or WEBHOOK_TOKEN_FILE) is set, an x-webhook-token header is added.
-# Event names match the Radarr/Sonarr API "on<Event>" flags.
+# Radarr/Sonarr event names match the API "on<Event>" flags; Seerr uses notification type names.
 
 radarr:
   - name: Webhook
@@ -39,3 +39,18 @@ sonarr:
       - onHealthRestored
       - onApplicationUpdate
       - onManualInteractionRequired
+
+# Seerr has a single webhook agent. The payload template is read from json_payload_file
+# (relative to this file); omit it to leave the existing payload unchanged.
+seerr:
+  enabled: true
+  embed_poster: true
+  url: http://integrations-bot:7777/api/v1/webhooks/overseerr
+  json_payload_file: seerr_webhook_payload.json
+  events:
+    - MEDIA_PENDING
+    - MEDIA_AVAILABLE
+    - MEDIA_FAILED
+    - ISSUE_CREATED
+    - ISSUE_COMMENT
+    - ISSUE_REOPENED

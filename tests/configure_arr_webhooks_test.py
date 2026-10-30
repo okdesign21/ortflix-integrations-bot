@@ -144,4 +144,143 @@ def test_api_failure_is_sanitized(capsys):
 
 def test_bundled_config_is_valid():
     desired = cfg.load_desired(cfg.DEFAULT_CONFIG)
-    assert set(desired) == {"radarr", "sonarr"}
+    assert set(desired) == {"radarr", "sonarr", "seerr"}
+
+
+def test_url_values_are_not_printed_on_update_or_create(monkeypatch, capsys):
+    secret_url = "http://bot/hook?token=urlsecret"
+    entry = {**ENTRY, "url": secret_url}
+    run_sync(monkeypatch, [connection()], apply=False, entry=entry)
+    run_sync(monkeypatch, [], apply=False, entry=entry)
+    out = capsys.readouterr().out
+    assert "urlsecret" not in out and "url: changed" in out
+
+
+def test_unreadable_config_is_a_clean_error(tmp_path):
+    with pytest.raises(SystemExit):
+        cfg.load_desired(tmp_path)
+    bad = tmp_path / "bad.yaml"
+    bad.write_bytes(b"\xff\xfe\x00")
+    with pytest.raises(SystemExit):
+        cfg.load_desired(bad)
+
+
+@pytest.mark.parametrize("override", [{"name": ["Webhook"]}, {"url": {"a": "b"}}])
+def test_non_string_name_or_url_is_rejected(tmp_path, override):
+    entry = {**ENTRY, **override}
+    path = tmp_path / "c.yaml"
+    path.write_text(cfg.yaml.safe_dump({"radarr": [entry]}))
+    with pytest.raises(SystemExit):
+        cfg.load_desired(path)
+
+
+def test_event_with_false_support_flag_is_rejected(monkeypatch):
+    unsupported = connection(onGrab=False, supportsOnGrab=False)
+    with pytest.raises(SystemExit):
+        run_sync(monkeypatch, [unsupported], apply=False)
+
+
+def test_non_json_response_is_a_clean_error(capsys):
+    class Html:
+        content = b"<html>"
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            raise ValueError("no json")
+
+    class Session:
+        def request(self, *args, **kwargs):
+            return Html()
+
+    with pytest.raises(SystemExit):
+        cfg.api(Session(), "GET", "http://radarr/api/v3/notification")
+    assert "non-JSON" in capsys.readouterr().err
+
+
+def test_apps_without_declarations_are_skipped(monkeypatch, tmp_path):
+    path = tmp_path / "c.yaml"
+    path.write_text(cfg.yaml.safe_dump({"radarr": [ENTRY]}))
+    called = []
+    monkeypatch.setattr(cfg, "sync_app", lambda app, *a: called.append(app) or 0)
+    monkeypatch.setattr(cfg, "_env", lambda *a, **k: None)
+    monkeypatch.setattr(sys, "argv", ["x", "--config", str(path)])
+    assert cfg.main() == 0
+    assert called == ["radarr"]
+
+
+SEERR_ENTRY = {
+    "enabled": True,
+    "embed_poster": True,
+    "url": "http://integrations-bot:7777/api/v1/webhooks/overseerr",
+    "events": ["MEDIA_PENDING", "ISSUE_CREATED"],
+}
+
+
+def seerr_state(**overrides):
+    state = {
+        "enabled": True,
+        "embedPoster": True,
+        "types": 2 + 256,
+        "options": {
+            "webhookUrl": SEERR_ENTRY["url"],
+            "customHeaders": [],
+            "authHeader": "keep",
+            "jsonPayload": cfg.encode_payload('{"a": 1}'),
+        },
+    }
+    state.update(overrides)
+    return state
+
+
+def run_seerr(monkeypatch, state, apply, entry=SEERR_ENTRY, token=None, tmp_path=None):
+    session = FakeSession(state)
+    monkeypatch.setattr(cfg, "overseerr_base_url", lambda: "http://seerr")
+    monkeypatch.setattr(cfg, "overseerr_api_key", lambda: "key")
+    monkeypatch.setattr(cfg, "overseerr_session", lambda key: session)
+    pending = cfg.sync_seerr(entry, token, apply, (tmp_path or Path(".")) / "c.yaml")
+    return pending, session.calls
+
+
+def test_seerr_matching_state_is_a_noop(monkeypatch):
+    pending, calls = run_seerr(monkeypatch, seerr_state(), apply=True)
+    assert pending == 0 and [c[0] for c in calls] == ["GET"]
+
+
+def test_seerr_drift_is_applied_and_preserves_other_options(monkeypatch, capsys):
+    pending, calls = run_seerr(monkeypatch, seerr_state(types=2), apply=True)
+    method, url, body = calls[-1]
+    assert (pending, method, url) == (
+        1,
+        "POST",
+        "http://seerr/api/v1/settings/notifications/webhook",
+    )
+    assert body["types"] == 258 and body["options"]["authHeader"] == "keep"
+    assert "types: 2 -> 258" in capsys.readouterr().out
+
+
+def test_seerr_payload_file_is_encoded_and_compared(monkeypatch, tmp_path):
+    (tmp_path / "p.json").write_text('{"b": 2}\n')
+    entry = {**SEERR_ENTRY, "json_payload_file": "p.json"}
+    _, calls = run_seerr(monkeypatch, seerr_state(), apply=True, entry=entry, tmp_path=tmp_path)
+    assert cfg.decode_payload(calls[-1][2]["options"]["jsonPayload"]) == '{"b": 2}'
+
+
+def test_seerr_unknown_event_is_rejected():
+    with pytest.raises(SystemExit):
+        cfg.validate_seerr({**SEERR_ENTRY, "events": ["NOPE"]})
+
+
+def test_seerr_token_header_not_printed(monkeypatch, capsys):
+    _, calls = run_seerr(monkeypatch, seerr_state(), apply=True, token="s3cret")
+    assert calls[-1][2]["options"]["customHeaders"] == [
+        {"key": "x-webhook-token", "value": "s3cret"}
+    ]
+    assert "s3cret" not in capsys.readouterr().out
+
+
+def test_bundled_seerr_payload_roundtrips():
+    entry = cfg.load_desired(cfg.DEFAULT_CONFIG)["seerr"]
+    text = cfg.load_payload(entry, cfg.DEFAULT_CONFIG)
+    assert cfg.decode_payload(cfg.encode_payload(text)) == text.strip()

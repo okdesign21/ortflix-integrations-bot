@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-configure_arr_webhooks.py — Declare Radarr/Sonarr webhook connections as code.
+configure_arr_webhooks.py — Declare Radarr/Sonarr/Seerr webhook connections as code.
 
 Reads config/arr_webhooks.yaml (or --config) and makes the named Webhook connections
-in Radarr/Sonarr match it. Connections not named in the file are never changed or
-deleted. If WEBHOOK_TOKEN is set, an x-webhook-token header is configured; header
-values are never printed.
+in Radarr/Sonarr, and the Seerr webhook agent, match it. Connections not named in the
+file are never changed or deleted. If WEBHOOK_TOKEN is set, an x-webhook-token header is
+configured; URLs, header values and API keys are never printed.
 
 Dry-run by default; pass --apply to write changes.
 
-  python scripts/configure_arr_webhooks.py [--apply] [--app radarr|sonarr|both] [--config PATH]
+  python scripts/configure_arr_webhooks.py [--apply] [--app radarr|sonarr|seerr|all]
+                                           [--config PATH]
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
+import json
 from pathlib import Path
 
 import requests
@@ -24,6 +27,9 @@ import yaml
 from integration_utils import (
     _env,
     fail,
+    overseerr_api_key,
+    overseerr_base_url,
+    overseerr_session,
     radarr_base_url,
     radarr_session,
     sonarr_base_url,
@@ -35,6 +41,21 @@ WEBHOOK_IMPLEMENTATION = "Webhook"
 TOKEN_HEADER = "x-webhook-token"
 METHODS = {"POST": 1, "PUT": 2}
 REQUEST_TIMEOUT = 30
+SEERR_WEBHOOK_PATH = "/api/v1/settings/notifications/webhook"
+SEERR_EVENT_BITS = {
+    "MEDIA_PENDING": 2,
+    "MEDIA_APPROVED": 4,
+    "MEDIA_AVAILABLE": 8,
+    "MEDIA_FAILED": 16,
+    "MEDIA_DECLINED": 64,
+    "MEDIA_AUTO_APPROVED": 128,
+    "ISSUE_CREATED": 256,
+    "ISSUE_COMMENT": 512,
+    "ISSUE_RESOLVED": 1024,
+    "ISSUE_REOPENED": 2048,
+    "MEDIA_AUTO_REQUESTED": 4096,
+}
+ALL_APPS = ("radarr", "sonarr", "seerr")
 
 APPS = {
     "radarr": {
@@ -50,46 +71,78 @@ APPS = {
 }
 
 
-def load_desired(path: Path) -> dict[str, list[dict]]:
+def load_desired(path: Path) -> dict:
     """Load and validate the desired webhook definitions."""
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except FileNotFoundError:
         fail(f"Missing config file: {path}")
+    except (OSError, UnicodeError) as exc:
+        fail(f"Cannot read config file {path}: {type(exc).__name__}")
     except yaml.YAMLError as exc:
         fail(f"Invalid YAML in {path}: {exc}")
     if not isinstance(data, dict):
         fail(f"Invalid config shape in {path}: expected top-level object")
 
-    desired: dict[str, list[dict]] = {}
+    desired: dict = {}
     for app, entries in data.items():
-        if app not in APPS:
-            fail(f"Unknown app '{app}' in {path}; expected one of {sorted(APPS)}")
-        if not isinstance(entries, list):
-            fail(f"'{app}' must be a list of webhook definitions")
-        names: set[str] = set()
-        for entry in entries:
-            validate_entry(app, entry)
-            if entry["name"] in names:
-                fail(f"Duplicate webhook name '{entry['name']}' for {app}")
-            names.add(entry["name"])
+        if app == "seerr":
+            validate_seerr(entries)
+        elif app in APPS:
+            validate_arr_list(app, entries)
+        else:
+            fail(f"Unknown app '{app}' in {path}; expected one of {list(ALL_APPS)}")
         desired[app] = entries
     return desired
+
+
+def validate_arr_list(app: str, entries: object) -> None:
+    if not isinstance(entries, list):
+        fail(f"'{app}' must be a list of webhook definitions")
+    names: set[str] = set()
+    for entry in entries:
+        validate_entry(app, entry)
+        if entry["name"] in names:
+            fail(f"Duplicate webhook name '{entry['name']}' for {app}")
+        names.add(entry["name"])
+
+
+def require_text(label: str, value: object) -> None:
+    if not isinstance(value, str) or not value.strip():
+        fail(f"{label} must be a non-empty string")
 
 
 def validate_entry(app: str, entry: object) -> None:
     if not isinstance(entry, dict):
         fail(f"Each {app} webhook must be an object")
-    for key in ("name", "url", "events"):
-        if not entry.get(key):
-            fail(f"{app} webhook is missing '{key}'")
+    require_text(f"{app} webhook name", entry.get("name"))
+    require_text(f"{app} webhook '{entry['name']}' url", entry.get("url"))
     if str(entry.get("method", "POST")).upper() not in METHODS:
         fail(f"{app} webhook '{entry['name']}': method must be one of {sorted(METHODS)}")
-    events = entry["events"]
-    if not isinstance(events, list) or not all(
-        isinstance(e, str) and e.startswith("on") for e in events
+    events = entry.get("events")
+    if (
+        not isinstance(events, list)
+        or not events
+        or not all(isinstance(e, str) and e.startswith("on") for e in events)
     ):
         fail(f"{app} webhook '{entry['name']}': events must be a list of 'on<Event>' names")
+
+
+def validate_seerr(entry: object) -> None:
+    if not isinstance(entry, dict):
+        fail("'seerr' must be an object")
+    require_text("seerr url", entry.get("url"))
+    events = entry.get("events")
+    if not isinstance(events, list) or not events or not all(isinstance(e, str) for e in events):
+        fail("seerr events must be a non-empty list of notification type names")
+    unknown = sorted(set(events) - set(SEERR_EVENT_BITS))
+    if unknown:
+        fail(f"seerr: unknown events {unknown}; available: {sorted(SEERR_EVENT_BITS)}")
+    for key in ("enabled", "embed_poster"):
+        if key in entry and not isinstance(entry[key], bool):
+            fail(f"seerr {key} must be true or false")
+    if "json_payload_file" in entry:
+        require_text("seerr json_payload_file", entry["json_payload_file"])
 
 
 def get_field(connection: dict, name: str):
@@ -112,11 +165,11 @@ def header_map(headers) -> dict[str, str]:
 
 
 def event_flags(connection: dict) -> dict[str, bool]:
-    """Event toggles the API exposes for this connection (those with a supports* flag)."""
+    """Event toggles this connection supports (those whose supports* flag is true)."""
     return {
         key: bool(connection.get(key))
         for key in connection
-        if key.startswith("on") and f"supports{key[0].upper()}{key[1:]}" in connection
+        if key.startswith("on") and connection.get(f"supports{key[0].upper()}{key[1:]}") is True
     }
 
 
@@ -143,9 +196,10 @@ def describe_changes(current: dict, wanted: dict) -> list[str]:
     for event, enabled in sorted(event_flags(wanted).items()):
         if event_flags(current).get(event) != enabled:
             changes.append(f"{event}: {event_flags(current).get(event)} -> {enabled}")
-    for field in ("url", "method"):
-        if get_field(current, field) != get_field(wanted, field):
-            changes.append(f"{field}: {get_field(current, field)} -> {get_field(wanted, field)}")
+    if get_field(current, "url") != get_field(wanted, "url"):
+        changes.append("url: changed (values not shown)")
+    if get_field(current, "method") != get_field(wanted, "method"):
+        changes.append(f"method: {get_field(current, 'method')} -> {get_field(wanted, 'method')}")
     if header_map(get_field(current, "headers")) != header_map(get_field(wanted, "headers")):
         have = sorted(header_map(get_field(current, "headers")))
         want = sorted(header_map(get_field(wanted, "headers")))
@@ -162,7 +216,12 @@ def api(session: requests.Session, method: str, url: str, **kwargs):
         status = getattr(getattr(exc, "response", None), "status_code", None)
         detail = f"HTTP {status}" if status else type(exc).__name__
         fail(f"{method} {url.split('?')[0]} failed ({detail})")
-    return response.json() if response.content else None
+    if not response.content:
+        return None
+    try:
+        return response.json()
+    except ValueError:
+        fail(f"{method} {url.split('?')[0]} returned non-JSON data")
 
 
 def fetch_schema_template(session: requests.Session, base: str) -> dict:
@@ -193,7 +252,7 @@ def sync_app(app: str, entries: list[dict], token: str | None, apply: bool) -> i
 
         if not matches:
             wanted = build_desired(fetch_schema_template(session, base), entry, token)
-            print(f"  create '{entry['name']}' -> {entry['url']}")
+            print(f"  create '{entry['name']}'")
             pending += 1
             if apply:
                 api(session, "POST", f"{base}/api/v3/notification", json=wanted)
@@ -214,10 +273,78 @@ def sync_app(app: str, entries: list[dict], token: str | None, apply: bool) -> i
     return pending
 
 
+def encode_payload(text: str) -> str:
+    """Seerr stores the payload as base64 of its JSON-string form."""
+    return base64.b64encode(json.dumps(text.strip()).encode()).decode()
+
+
+def decode_payload(value: str | None) -> str | None:
+    try:
+        return json.loads(base64.b64decode(value or "")).strip()
+    except (ValueError, TypeError):
+        return None
+
+
+def load_payload(entry: dict, config_path: Path) -> str | None:
+    if "json_payload_file" not in entry:
+        return None
+    path = config_path.parent / entry["json_payload_file"]
+    try:
+        text = path.read_text(encoding="utf-8")
+        json.loads(text)
+    except (OSError, UnicodeError) as exc:
+        fail(f"Cannot read seerr payload file {path}: {type(exc).__name__}")
+    except ValueError:
+        fail(f"Seerr payload file {path} is not valid JSON")
+    return text
+
+
+def sync_seerr(entry: dict, token: str | None, apply: bool, config_path: Path) -> int:
+    base = overseerr_base_url()
+    session = overseerr_session(overseerr_api_key())
+    url = f"{base}{SEERR_WEBHOOK_PATH}"
+    print(f"== seerr ({base})")
+
+    current = api(session, "GET", url) or {}
+    wanted = copy.deepcopy(current)
+    options = wanted.setdefault("options", {})
+    wanted["enabled"] = entry.get("enabled", True)
+    wanted["embedPoster"] = entry.get("embed_poster", True)
+    wanted["types"] = sum(SEERR_EVENT_BITS[e] for e in entry["events"])
+    options["webhookUrl"] = entry["url"]
+    options["customHeaders"] = [{"key": TOKEN_HEADER, "value": token}] if token else []
+    payload = load_payload(entry, config_path)
+    if payload is not None:
+        options["jsonPayload"] = encode_payload(payload)
+
+    cur_options = current.get("options", {})
+    changes = []
+    for key in ("enabled", "embedPoster", "types"):
+        if current.get(key) != wanted[key]:
+            changes.append(f"{key}: {current.get(key)} -> {wanted[key]}")
+    if cur_options.get("webhookUrl") != options["webhookUrl"]:
+        changes.append("url: changed (values not shown)")
+    if header_map(cur_options.get("customHeaders")) != header_map(options["customHeaders"]):
+        have = sorted(header_map(cur_options.get("customHeaders")))
+        changes.append(f"headers: {have} -> {sorted(header_map(options['customHeaders']))}")
+    if payload is not None and decode_payload(cur_options.get("jsonPayload")) != payload.strip():
+        changes.append("jsonPayload: changed")
+
+    if not changes:
+        print("  ok 'webhook'")
+        return 0
+    print("  update 'webhook':")
+    for change in changes:
+        print(f"    {change}")
+    if apply:
+        api(session, "POST", url, json=wanted)
+    return 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--apply", action="store_true", help="write changes (default: dry-run)")
-    ap.add_argument("--app", choices=["radarr", "sonarr", "both"], default="both")
+    ap.add_argument("--app", choices=[*ALL_APPS, "all"], default="all")
     ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="webhook definitions file")
     args = ap.parse_args()
 
@@ -227,8 +354,13 @@ def main() -> int:
     print(f"Mode: {'APPLY' if args.apply else 'DRY-RUN'}")
 
     pending = 0
-    for app in ("radarr", "sonarr") if args.app == "both" else (args.app,):
-        pending += sync_app(app, desired.get(app, []), token, args.apply)
+    for app in ALL_APPS if args.app == "all" else (args.app,):
+        if not desired.get(app):
+            continue
+        if app == "seerr":
+            pending += sync_seerr(desired[app], token, args.apply, args.config)
+        else:
+            pending += sync_app(app, desired[app], token, args.apply)
     print(f"{'Applied' if args.apply else 'Pending'} changes: {pending}")
     return 0
 
