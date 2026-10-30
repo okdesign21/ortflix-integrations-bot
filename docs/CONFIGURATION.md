@@ -148,6 +148,8 @@ maps each Plex username to the tag name for that person so both match:
   email, via Tautulli) and adds them as an automatic entry. This needs `TAUTULLI_URL`
   and `TAUTULLI_API_KEY`; without them the user's own name is used and nothing is saved.
 - The file lives in `$ORTFLIX_USER_MAP_DIR`, else `/config` when mounted, else `config/`.
+  It is private and git-ignored. On the server, Ansible seeds `/config/user_map.json` from the
+  git-ignored `ortflix-costume/bot/config/user_map.json` when the server has none.
 
 Manage it with `scripts/map_users.py` (also available as Telegram manual actions):
 
