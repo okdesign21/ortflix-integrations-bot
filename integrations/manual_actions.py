@@ -22,6 +22,24 @@ ACTIONS: dict[str, dict[str, object]] = {
         "args": ["--summary"],
         "description": "Compare Plex library items against Kometa asset folders.",
     },
+    "user_map_show": {
+        "label": "User map (show)",
+        "script": "map_users.py",
+        "args": ["show"],
+        "description": "Show the Plex username to tag name map.",
+    },
+    "user_map_sync_dry": {
+        "label": "User map sync (dry run)",
+        "script": "map_users.py",
+        "args": ["sync"],
+        "description": "Preview user map additions/changes from Tautulli and Overseerr.",
+    },
+    "user_map_sync_apply": {
+        "label": "User map sync (apply)",
+        "script": "map_users.py",
+        "args": ["sync", "--apply"],
+        "description": "Save user map changes (manually locked entries are kept).",
+    },
     "audiofix_dry": {
         "label": "Audio lang fix (dry run)",
         "script": "audio_fix_radarr.py",

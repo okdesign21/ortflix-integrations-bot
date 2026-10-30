@@ -35,3 +35,5 @@ config/bot_settings.local.yml
 *~
 
 docs/AUDIT*
+# Per-deployment user map (written by the bot)
+config/user_map.json

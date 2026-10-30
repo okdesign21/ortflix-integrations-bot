@@ -191,6 +191,10 @@ def _clean_username(name: Optional[str]) -> Optional[str]:
     return cleaned
 
 
+# Tag for items with no Overseerr request (pre-Overseerr or manually added).
+DEFAULT_REQUESTER_LABEL = "okdesign-requested"
+
+
 def requester_tag_from_user(user: Optional[dict]) -> str:
     """Build a stable requester tag with username/displayName/email defaults."""
     if not user:
@@ -282,14 +286,14 @@ def sonarr_session(api_key: str) -> requests.Session:
     return s
 
 
-def overseerr_api_key() -> str:
-    """Get Overseerr API key from env.
+def read_overseerr_api_key() -> str | None:
+    """Overseerr API key from OVERSEERR_API_KEY, else SEERR_API_KEY (None if unset)."""
+    return os.getenv("OVERSEERR_API_KEY") or os.getenv("SEERR_API_KEY") or None
 
-    Resolution order:
-    1) OVERSEERR_API_KEY
-    2) SEERR_API_KEY
-    """
-    key = os.getenv("OVERSEERR_API_KEY") or os.getenv("SEERR_API_KEY")
+
+def overseerr_api_key() -> str:
+    """Get the Overseerr API key from env, exiting if it is missing."""
+    key = read_overseerr_api_key()
     if not key:
         fail("Missing OVERSEERR_API_KEY or SEERR_API_KEY in environment")
     return key
@@ -335,28 +339,39 @@ def find_overseerr_request(
     title=None,
     year=None,
 ) -> dict | None:
-    """Find matching Overseerr request by media identifiers and title/year."""
-    r = s.get(f"{base.rstrip('/')}/api/v1/request", params=request_query, timeout=15)
-    r.raise_for_status()
+    """Find a matching Overseerr request by media identifiers and title/year.
 
-    data = r.json()
-    results = (data.get("results") if isinstance(data, dict) else data) or []
-    for req in results:
-        media = req.get("media") or {}
-        if media_types is not None:
-            media_type = str(media.get("mediaType", "")).lower()
-            if media_type not in media_types:
-                continue
-        if _media_matches(
-            media,
-            tmdb_id=tmdb_id,
-            tvdb_id=tvdb_id,
-            imdb_id=imdb_id,
-            title=title,
-            year=year,
-        ):
-            return req
-    return None
+    Pages through the results (using the query's ``take``) so a match beyond the first page
+    is still found.
+    """
+    query = dict(request_query)
+    take = int(query.setdefault("take", 100))
+    skip = int(query.get("skip", 0))
+    while True:
+        query["skip"] = skip
+        r = s.get(f"{base.rstrip('/')}/api/v1/request", params=query, timeout=15)
+        r.raise_for_status()
+
+        data = r.json()
+        results = (data.get("results") if isinstance(data, dict) else data) or []
+        for req in results:
+            media = req.get("media") or {}
+            if media_types is not None:
+                media_type = str(media.get("mediaType", "")).lower()
+                if media_type not in media_types:
+                    continue
+            if _media_matches(
+                media,
+                tmdb_id=tmdb_id,
+                tvdb_id=tvdb_id,
+                imdb_id=imdb_id,
+                title=title,
+                year=year,
+            ):
+                return req
+        if len(results) < take:
+            return None
+        skip += len(results)
 
 
 # ====== Radarr/Sonarr Common ======
