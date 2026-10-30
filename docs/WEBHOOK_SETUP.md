@@ -129,6 +129,58 @@ Useful env vars:
 2. `SONARR_AUDIO_DEFAULT_LANG`
 3. `SONARR_SDR_ROOT`, `SONARR_HDR_ROOT`, `SONARR_HDR_PROFILE_KEYWORDS`
 
+## Configure Radarr/Sonarr/Seerr/Tautulli Webhooks As Code
+
+Instead of the UI steps above, the Radarr and Sonarr webhook connections, the Seerr webhook
+agent and Tautulli Webhook agents can be declared in `config/arr_webhooks.yaml` and applied through their APIs:
+
+```bash
+python scripts/configure_arr_webhooks.py            # dry run, prints the diff
+python scripts/configure_arr_webhooks.py --apply    # writes changes
+```
+
+1. Only connections named in the file are managed; other connections (Plex, Telegram, custom
+   scripts) are never changed or deleted. Use `--config PATH` for a different file and
+   `--app radarr|sonarr|seerr|tautulli|all` to limit the run. Apps absent from the file are skipped.
+2. `RADARR_API_KEY`/`SONARR_API_KEY`/`OVERSEERR_API_KEY` (or their `_FILE` forms) and the
+   service URLs follow the same resolution as the other scripts. Tautulli uses `TAUTULLI_API_KEY`
+   and optionally `TAUTULLI_URL` (default `http://tautulli:8181`).
+3. Seerr has one webhook agent: declare `enabled`, `embed_poster`, `url` and `events`
+   (notification type names such as `MEDIA_PENDING`). `json_payload_file` is read relative to the
+   config file; omit it to keep the existing payload. Other Seerr options are preserved.
+4. Tautulli notifiers are matched by `name` and must be Webhook agents; the script never touches
+   other notifiers (for example legacy Script agents). `events` are trigger names such as
+   `on_watched`, `json_data_file` is the JSON body sent per trigger, and `custom_conditions` is
+   optional. Creating a new notifier is supported.
+5. If `WEBHOOK_TOKEN` (or `WEBHOOK_TOKEN_FILE`) is set, an `x-webhook-token` header is configured.
+   An existing header that the settings do not declare is reported as a difference.
+6. URLs, header values and API keys are never printed; changed URLs are reported as
+   `url: changed`.
+7. Radarr, Sonarr and Seerr entries were derived from the live server (no auth header); the
+   Tautulli entry is new, because the live Tautulli currently runs legacy Script agents. Remove
+   those by hand after the bot handles `watched` events, to avoid double processing. Review the
+   first dry run before applying.
+8. The media-check endpoint has no service to configure; it is called by your own scanner/cron.
+9. Deployment: the image ships `scripts/` and the three `config/` files this script reads, so it can
+   run inside the live container (`docker exec integrations-bot python scripts/configure_arr_webhooks.py`)
+   or from Telegram `/actions`. The `ortflix` Ansible playbook wraps this behind the opt-in
+   `webhooks` tag (dry run by default).
+
+## Webhook And Script Map
+
+| Source | Endpoint | Events | Script dispatched |
+| --- | --- | --- | --- |
+| Radarr | `/api/v1/webhooks/radarr` | `Download`, `MovieAdded` | `tag_overseerr_requester_radarr.py`, `audio_fix_radarr.py`; `route_hdr_on_import_radarr.py` |
+| Sonarr | `/api/v1/webhooks/sonarr` | `Download`, `SeriesAdd` | `tag_overseerr_requester_sonarr.py`, `audio_fix_sonarr.py`; `route_hdr_on_import_sonarr.py` |
+| Tautulli | `/api/v1/webhooks/tautulli` | `watched` | `tag_radarr_watched_tautulli.py` |
+| Seerr | `/api/v1/webhooks/overseerr` (alias `/seerr`) | request/issue events | Telegram notifications, no script |
+| Scanner/cron | `/api/v1/webhooks/media-check` | corruption reports | Telegram notifications, no script |
+
+Operator scripts run from Telegram `/actions`: `check_plex_titles.py`, `map_users.py`,
+`audio_fix_radarr.py`, `retag_requesters.py`, `retag_watched.py`, `configure_arr_webhooks.py`.
+CI/release tooling (`scan_image.py`, `check_runtime_image.py`, `release_version.py`,
+`summarize_trivy_report.py`, `update_dependencies.py`) is not shipped in the image.
+
 ## Tautulli
 
 Use the **Webhook** notification agent (not the Script agent) so events route through the bot.

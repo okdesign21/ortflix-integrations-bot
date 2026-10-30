@@ -58,6 +58,14 @@ def test_unconfigured_secret():
     assert load_secret("TELEGRAM_TOKEN") is None
 
 
+def test_tautulli_api_key_file_loading(tmp_path, monkeypatch):
+    secret_file = tmp_path / "tautulli-api-key"
+    secret_file.write_text("tautulli-file-secret\n", encoding="utf-8")
+    monkeypatch.setenv("TAUTULLI_API_KEY_FILE", str(secret_file))
+
+    assert load_secret("TAUTULLI_API_KEY") == "tautulli-file-secret"
+
+
 @pytest.mark.parametrize("launch", [["-m", "bot"], ["-c", "from bot import main; main()"]])
 def test_executable_startup_reports_secret_file_errors_without_traceback(tmp_path, launch):
     environment = os.environ.copy()

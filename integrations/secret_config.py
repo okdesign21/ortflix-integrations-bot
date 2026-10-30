@@ -15,6 +15,7 @@ SECRET_NAMES = frozenset(
         "SEERR_API_KEY",
         "RADARR_API_KEY",
         "SONARR_API_KEY",
+        "TAUTULLI_API_KEY",
         "WEBHOOK_TOKEN",
         "PLEX_TOKEN",
         "DISCORD_WEBHOOK_URL",

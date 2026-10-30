@@ -107,3 +107,9 @@ async def test_run_manual_action_reports_launch_failure(tmp_path: Path, monkeypa
     assert "Failed to run" in message
     assert "permission denied" not in message
     assert "permissions" in message
+
+
+def test_every_action_has_a_script_and_a_valid_callback_size():
+    for action_id, cfg in manual_actions.ACTIONS.items():
+        assert (manual_actions.SCRIPTS_DIR / str(cfg["script"])).exists(), action_id
+        assert len(f"manual_run_{action_id}".encode()) <= 64, action_id
