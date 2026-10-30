@@ -17,7 +17,6 @@ Dry-run by default; pass --apply to write changes.
 from __future__ import annotations
 
 import argparse
-import base64
 import copy
 import json
 import os
@@ -175,7 +174,7 @@ def validate_seerr(entry: object) -> None:
         if key in entry and not isinstance(entry[key], bool):
             fail(f"seerr {key} must be true or false")
     if "json_payload_file" in entry:
-        require_text("seerr json_payload_file", entry["json_payload_file"])
+        fail("seerr json_payload_file is no longer supported; Seerr keeps its own payload")
 
 
 def get_field(connection: dict, name: str):
@@ -437,18 +436,6 @@ def sync_tautulli(entries: list[dict], token: str | None, apply: bool, config_pa
     return pending
 
 
-def encode_payload(text: str) -> str:
-    """Seerr stores the payload as base64 of its JSON-string form."""
-    return base64.b64encode(json.dumps(text.strip()).encode()).decode()
-
-
-def decode_payload(value: str | None) -> str | None:
-    try:
-        return json.loads(base64.b64decode(value or "")).strip()
-    except (ValueError, TypeError):
-        return None
-
-
 def load_json_file(entry: dict, field: str, config_path: Path, label: str) -> str | None:
     """Read a JSON template referenced by a config entry, relative to the config file."""
     if field not in entry:
@@ -467,7 +454,7 @@ def load_json_file(entry: dict, field: str, config_path: Path, label: str) -> st
     return text
 
 
-def sync_seerr(entry: dict, token: str | None, apply: bool, config_path: Path) -> int:
+def sync_seerr(entry: dict, token: str | None, apply: bool) -> int:
     base = overseerr_base_url()
     session = overseerr_session(overseerr_api_key())
     url = f"{base}{SEERR_WEBHOOK_PATH}"
@@ -481,9 +468,6 @@ def sync_seerr(entry: dict, token: str | None, apply: bool, config_path: Path) -
     wanted["types"] = sum(SEERR_EVENT_BITS[e] for e in entry["events"])
     options["webhookUrl"] = entry["url"]
     options["customHeaders"] = [{"key": TOKEN_HEADER, "value": token}] if token else []
-    payload = load_json_file(entry, "json_payload_file", config_path, "seerr")
-    if payload is not None:
-        options["jsonPayload"] = encode_payload(payload)
 
     cur_options = current.get("options", {})
     changes = []
@@ -495,8 +479,6 @@ def sync_seerr(entry: dict, token: str | None, apply: bool, config_path: Path) -
     if header_map(cur_options.get("customHeaders")) != header_map(options["customHeaders"]):
         have = sorted(header_map(cur_options.get("customHeaders")))
         changes.append(f"headers: {have} -> {sorted(header_map(options['customHeaders']))}")
-    if payload is not None and decode_payload(cur_options.get("jsonPayload")) != payload.strip():
-        changes.append("jsonPayload: changed")
 
     if not changes:
         print("  ok 'webhook'")
@@ -526,7 +508,7 @@ def main() -> int:
         if not desired.get(app):
             continue
         if app == "seerr":
-            pending += sync_seerr(desired[app], token, args.apply, args.config)
+            pending += sync_seerr(desired[app], token, args.apply)
         elif app == "tautulli":
             pending += sync_tautulli(desired[app], token, args.apply, args.config)
         else:

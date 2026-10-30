@@ -146,8 +146,8 @@ python scripts/configure_arr_webhooks.py --apply    # writes changes
    service URLs follow the same resolution as the other scripts. Tautulli uses `TAUTULLI_API_KEY`
    and optionally `TAUTULLI_URL` (default `http://tautulli:8181`).
 3. Seerr has one webhook agent: declare `enabled`, `embed_poster`, `url` and `events`
-   (notification type names such as `MEDIA_PENDING`). `json_payload_file` is read relative to the
-   config file; omit it to keep the existing payload. Other Seerr options are preserved.
+   (notification type names such as `MEDIA_PENDING`). Seerr's own JSON payload and other options
+   are preserved; the script does not manage the payload.
 4. Tautulli notifiers are matched by `name` and must be Webhook agents; the script never touches
    other notifiers (for example legacy Script agents). `events` are trigger names such as
    `on_watched`, `json_data_file` is the JSON body sent per trigger, and `custom_conditions` is
@@ -178,8 +178,9 @@ python scripts/configure_arr_webhooks.py --apply    # writes changes
 
 Operator scripts run from Telegram `/actions`: `check_plex_titles.py`, `map_users.py`,
 `audio_fix_radarr.py`, `retag_requesters.py`, `retag_watched.py`, `configure_arr_webhooks.py`.
-CI/release tooling (`scan_image.py`, `check_runtime_image.py`, `release_version.py`,
-`summarize_trivy_report.py`, `update_dependencies.py`) is not shipped in the image.
+Host-side CI tooling (`scan_image.py`, `summarize_trivy_report.py`, `release_version.py`,
+`update_dependencies.py`) is excluded from the image by `.dockerignore`; only
+`check_runtime_image.py`, which CI runs inside the image, ships alongside the operator scripts.
 
 ## Tautulli
 

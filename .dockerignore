@@ -9,7 +9,6 @@
 config/**
 !config/bot_settings.yaml
 !config/arr_webhooks.yaml
-!config/seerr_webhook_payload.json
 !config/tautulli_watched_body.json
 !integrations
 integrations/**
@@ -19,3 +18,5 @@ scripts/**
 !scripts/*.py
 scripts/update_dependencies.py
 scripts/release_version.py
+scripts/scan_image.py
+scripts/summarize_trivy_report.py
