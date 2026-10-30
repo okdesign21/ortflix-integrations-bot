@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-configure_arr_webhooks.py — Declare Radarr/Sonarr/Seerr webhook connections as code.
+configure_arr_webhooks.py — Declare Radarr/Sonarr/Seerr/Tautulli webhooks as code.
 
-Reads config/arr_webhooks.yaml (or --config) and makes the named Webhook connections
-in Radarr/Sonarr, and the Seerr webhook agent, match it. Connections not named in the
-file are never changed or deleted. If WEBHOOK_TOKEN is set, an x-webhook-token header is
-configured; URLs, header values and API keys are never printed.
+Reads config/arr_webhooks.yaml (or --config) and makes the named Webhook connections in
+Radarr/Sonarr, the Seerr webhook agent and the named Tautulli Webhook agents match it.
+Connections not named in the file are never changed or deleted. If WEBHOOK_TOKEN is set, an
+x-webhook-token header is configured; URLs, header values and API keys are never printed.
 
 Dry-run by default; pass --apply to write changes.
 
-  python scripts/configure_arr_webhooks.py [--apply] [--app radarr|sonarr|seerr|all]
+  python scripts/configure_arr_webhooks.py [--apply] [--app radarr|sonarr|seerr|tautulli|all]
                                            [--config PATH]
 """
 
@@ -20,6 +20,7 @@ import argparse
 import base64
 import copy
 import json
+import os
 from pathlib import Path
 
 import requests
@@ -55,7 +56,9 @@ SEERR_EVENT_BITS = {
     "ISSUE_REOPENED": 2048,
     "MEDIA_AUTO_REQUESTED": 4096,
 }
-ALL_APPS = ("radarr", "sonarr", "seerr")
+TAUTULLI_WEBHOOK_AGENT_ID = 25
+TAUTULLI_METHODS = ("GET", "POST", "PUT", "DELETE", "PATCH")
+ALL_APPS = ("radarr", "sonarr", "seerr", "tautulli")
 
 APPS = {
     "radarr": {
@@ -88,6 +91,8 @@ def load_desired(path: Path) -> dict:
     for app, entries in data.items():
         if app == "seerr":
             validate_seerr(entries)
+        elif app == "tautulli":
+            validate_tautulli(entries)
         elif app in APPS:
             validate_arr_list(app, entries)
         else:
@@ -105,6 +110,34 @@ def validate_arr_list(app: str, entries: object) -> None:
         if entry["name"] in names:
             fail(f"Duplicate webhook name '{entry['name']}' for {app}")
         names.add(entry["name"])
+
+
+def validate_tautulli(entries: object) -> None:
+    if not isinstance(entries, list):
+        fail("'tautulli' must be a list of webhook definitions")
+    names: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            fail("Each tautulli webhook must be an object")
+        require_text("tautulli webhook name", entry.get("name"))
+        require_text(f"tautulli webhook '{entry['name']}' url", entry.get("url"))
+        if entry["name"] in names:
+            fail(f"Duplicate webhook name '{entry['name']}' for tautulli")
+        names.add(entry["name"])
+        if str(entry.get("method", "POST")).upper() not in TAUTULLI_METHODS:
+            fail(f"tautulli webhook '{entry['name']}': method must be one of {TAUTULLI_METHODS}")
+        events = entry.get("events")
+        if (
+            not isinstance(events, list)
+            or not events
+            or not all(isinstance(e, str) and e.startswith("on_") for e in events)
+        ):
+            fail(f"tautulli webhook '{entry['name']}': events must be a list of 'on_<event>' names")
+        if "json_data_file" in entry:
+            require_text("tautulli json_data_file", entry["json_data_file"])
+        conditions = entry.get("custom_conditions")
+        if conditions is not None and not isinstance(conditions, list):
+            fail(f"tautulli webhook '{entry['name']}': custom_conditions must be a list")
 
 
 def require_text(label: str, value: object) -> None:
@@ -273,6 +306,137 @@ def sync_app(app: str, entries: list[dict], token: str | None, apply: bool) -> i
     return pending
 
 
+def tautulli_call(session: requests.Session, base: str, key: str, cmd: str, **params):
+    """Call the Tautulli API; the key travels in the POST body, never in the URL."""
+    body = api(session, "POST", f"{base}/api/v2", data={"apikey": key, "cmd": cmd, **params})
+    result = (body or {}).get("response", {})
+    if result.get("result") != "success":
+        fail(f"Tautulli {cmd} failed: {result.get('message') or 'unknown error'}")
+    return result.get("data")
+
+
+def tautulli_wanted(current: dict, entry: dict, token: str | None, config_path: Path) -> dict:
+    """Build the set_notifier_config parameters for a declared Tautulli webhook."""
+    actions = current.get("actions") or {}
+    unknown = sorted(set(entry["events"]) - set(actions))
+    if unknown:
+        fail(
+            f"'{entry['name']}': unsupported tautulli events {unknown}; "
+            f"available: {sorted(actions)}"
+        )
+    wanted = {
+        "friendly_name": entry["name"],
+        "webhook_hook": entry["url"],
+        "webhook_method": str(entry.get("method", "POST")).upper(),
+    }
+    for action in actions:
+        wanted[action] = 1 if action in entry["events"] else 0
+    headers = json.dumps({TOKEN_HEADER: token}) if token else ""
+    payload = load_json_file(entry, "json_data_file", config_path, "tautulli")
+    for action in entry["events"]:
+        wanted[f"{action}_subject"] = headers
+        if payload is not None:
+            wanted[f"{action}_body"] = payload.strip()
+    if "custom_conditions" in entry:
+        wanted["custom_conditions"] = json.dumps(entry["custom_conditions"])
+        wanted["custom_conditions_logic"] = str(entry.get("custom_conditions_logic", ""))
+    return wanted
+
+
+def json_equal(left: str | None, right: str | None) -> bool:
+    def parse(text):
+        return json.loads(text) if text and text.strip() else None
+
+    try:
+        return parse(left) == parse(right)
+    except ValueError:
+        return False
+
+
+def tautulli_changes(current: dict, wanted: dict, entry: dict) -> list[str]:
+    config = current.get("config") or {}
+    notify_text = current.get("notify_text") or {}
+    changes = []
+    if current.get("friendly_name") != wanted["friendly_name"]:
+        changes.append("friendly_name: changed")
+    if config.get("hook") != wanted["webhook_hook"]:
+        changes.append("url: changed (values not shown)")
+    if config.get("method") != wanted["webhook_method"]:
+        changes.append(f"method: {config.get('method')} -> {wanted['webhook_method']}")
+    for action, enabled in (current.get("actions") or {}).items():
+        if int(enabled) != wanted[action]:
+            changes.append(f"{action}: {int(enabled)} -> {wanted[action]}")
+    for action in entry["events"]:
+        text = notify_text.get(action) or {}
+        if not json_equal(text.get("subject"), wanted[f"{action}_subject"]):
+            changes.append(f"{action} headers: changed (values not shown)")
+        if f"{action}_body" in wanted and not json_equal(
+            text.get("body"), wanted[f"{action}_body"]
+        ):
+            changes.append(f"{action} JSON data: changed")
+    if (
+        "custom_conditions" in wanted
+        and current.get("custom_conditions") != entry["custom_conditions"]
+    ):
+        changes.append("custom_conditions: changed")
+    return changes
+
+
+def sync_tautulli(entries: list[dict], token: str | None, apply: bool, config_path: Path) -> int:
+    base = os.getenv("TAUTULLI_URL", "").strip().rstrip("/") or "http://tautulli:8181"
+    key = _env("TAUTULLI_API_KEY", required=True)
+    session = requests.Session()
+    session.headers.update({"Accept": "application/json"})
+    print(f"== tautulli ({base})")
+
+    notifiers = tautulli_call(session, base, key, "get_notifiers")
+    pending = 0
+    for entry in entries:
+        matches = [n for n in notifiers if n.get("friendly_name") == entry["name"]]
+        if len(matches) > 1:
+            fail(f"tautulli has {len(matches)} notifiers named '{entry['name']}'; resolve manually")
+        if matches and int(matches[0].get("agent_id", 0)) != TAUTULLI_WEBHOOK_AGENT_ID:
+            fail(f"tautulli notifier '{entry['name']}' exists but is not a Webhook agent")
+
+        if not matches:
+            print(f"  create '{entry['name']}'")
+            pending += 1
+            if apply:
+                known = {int(n["id"]) for n in notifiers}
+                tautulli_call(
+                    session, base, key, "add_notifier_config", agent_id=TAUTULLI_WEBHOOK_AGENT_ID
+                )
+                notifiers = tautulli_call(session, base, key, "get_notifiers")
+                created = [int(n["id"]) for n in notifiers if int(n["id"]) not in known]
+                if len(created) != 1:
+                    fail(f"Could not identify the new tautulli notifier for '{entry['name']}'")
+                current = tautulli_call(
+                    session, base, key, "get_notifier_config", notifier_id=created[0]
+                )
+                wanted = tautulli_wanted(current, entry, token, config_path)
+                tautulli_call(
+                    session, base, key, "set_notifier_config", notifier_id=created[0], **wanted
+                )
+            continue
+
+        notifier_id = int(matches[0]["id"])
+        current = tautulli_call(session, base, key, "get_notifier_config", notifier_id=notifier_id)
+        wanted = tautulli_wanted(current, entry, token, config_path)
+        changes = tautulli_changes(current, wanted, entry)
+        if not changes:
+            print(f"  ok '{entry['name']}'")
+            continue
+        pending += 1
+        print(f"  update '{entry['name']}':")
+        for change in changes:
+            print(f"    {change}")
+        if apply:
+            tautulli_call(
+                session, base, key, "set_notifier_config", notifier_id=notifier_id, **wanted
+            )
+    return pending
+
+
 def encode_payload(text: str) -> str:
     """Seerr stores the payload as base64 of its JSON-string form."""
     return base64.b64encode(json.dumps(text.strip()).encode()).decode()
@@ -285,17 +449,21 @@ def decode_payload(value: str | None) -> str | None:
         return None
 
 
-def load_payload(entry: dict, config_path: Path) -> str | None:
-    if "json_payload_file" not in entry:
+def load_json_file(entry: dict, field: str, config_path: Path, label: str) -> str | None:
+    """Read a JSON template referenced by a config entry, relative to the config file."""
+    if field not in entry:
         return None
-    path = config_path.parent / entry["json_payload_file"]
+    path = config_path.parent / entry[field]
     try:
         text = path.read_text(encoding="utf-8")
+        if not text.strip():
+            fail(f"{label} template file {path} is empty")
+        # Tautulli placeholders such as {title} sit inside JSON strings, so this still parses.
         json.loads(text)
     except (OSError, UnicodeError) as exc:
-        fail(f"Cannot read seerr payload file {path}: {type(exc).__name__}")
+        fail(f"Cannot read {label} template file {path}: {type(exc).__name__}")
     except ValueError:
-        fail(f"Seerr payload file {path} is not valid JSON")
+        fail(f"{label} template file {path} is not valid JSON")
     return text
 
 
@@ -313,7 +481,7 @@ def sync_seerr(entry: dict, token: str | None, apply: bool, config_path: Path) -
     wanted["types"] = sum(SEERR_EVENT_BITS[e] for e in entry["events"])
     options["webhookUrl"] = entry["url"]
     options["customHeaders"] = [{"key": TOKEN_HEADER, "value": token}] if token else []
-    payload = load_payload(entry, config_path)
+    payload = load_json_file(entry, "json_payload_file", config_path, "seerr")
     if payload is not None:
         options["jsonPayload"] = encode_payload(payload)
 
@@ -359,6 +527,8 @@ def main() -> int:
             continue
         if app == "seerr":
             pending += sync_seerr(desired[app], token, args.apply, args.config)
+        elif app == "tautulli":
+            pending += sync_tautulli(desired[app], token, args.apply, args.config)
         else:
             pending += sync_app(app, desired[app], token, args.apply)
     print(f"{'Applied' if args.apply else 'Pending'} changes: {pending}")

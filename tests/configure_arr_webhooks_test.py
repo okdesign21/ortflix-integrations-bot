@@ -144,7 +144,7 @@ def test_api_failure_is_sanitized(capsys):
 
 def test_bundled_config_is_valid():
     desired = cfg.load_desired(cfg.DEFAULT_CONFIG)
-    assert set(desired) == {"radarr", "sonarr", "seerr"}
+    assert set(desired) == {"radarr", "sonarr", "seerr", "tautulli"}
 
 
 def test_url_values_are_not_printed_on_update_or_create(monkeypatch, capsys):
@@ -282,5 +282,147 @@ def test_seerr_token_header_not_printed(monkeypatch, capsys):
 
 def test_bundled_seerr_payload_roundtrips():
     entry = cfg.load_desired(cfg.DEFAULT_CONFIG)["seerr"]
-    text = cfg.load_payload(entry, cfg.DEFAULT_CONFIG)
+    text = cfg.load_json_file(entry, "json_payload_file", cfg.DEFAULT_CONFIG, "seerr")
     assert cfg.decode_payload(cfg.encode_payload(text)) == text.strip()
+
+
+TAUTULLI_ENTRY = {
+    "name": "Bot",
+    "url": "http://integrations-bot:7777/api/v1/webhooks/tautulli",
+    "method": "POST",
+    "events": ["on_watched"],
+}
+
+
+def tautulli_state(**overrides):
+    state = {
+        "id": 7,
+        "agent_id": 25,
+        "friendly_name": "Bot",
+        "config": {"hook": TAUTULLI_ENTRY["url"], "method": "POST"},
+        "actions": {"on_watched": "1", "on_play": "0"},
+        "notify_text": {"on_watched": {"subject": "", "body": ""}},
+        "custom_conditions": [],
+    }
+    state.update(overrides)
+    return state
+
+
+class FakeTautulli:
+    """Records Tautulli API calls; serves canned notifier data by command."""
+
+    def __init__(self, notifiers, config):
+        self.notifiers = notifiers
+        self.config = config
+        self.calls = []
+
+    def request(self, method, url, data=None, **kwargs):
+        self.calls.append(dict(data))
+        cmd = data["cmd"]
+        if cmd == "get_notifiers":
+            payload = self.notifiers
+        elif cmd == "get_notifier_config":
+            payload = self.config
+        else:
+            payload = None
+        if cmd == "add_notifier_config":
+            self.notifiers = [*self.notifiers, {"id": 9, "agent_id": 25, "friendly_name": ""}]
+        return FakeResponse({"response": {"result": "success", "message": None, "data": payload}})
+
+
+def run_tautulli(monkeypatch, notifiers, config, apply, entry=TAUTULLI_ENTRY, token=None):
+    fake = FakeTautulli(notifiers, config)
+    monkeypatch.setattr(cfg.requests, "Session", lambda: _with_headers(fake))
+    monkeypatch.setattr(cfg, "_env", lambda *a, **k: "tkey")
+    monkeypatch.setenv("TAUTULLI_URL", "http://tautulli:8181")
+    pending = cfg.sync_tautulli([entry], token, apply, Path("c.yaml"))
+    return pending, fake.calls
+
+
+def _with_headers(fake):
+    fake.headers = {}
+    return fake
+
+
+def test_tautulli_matching_notifier_is_a_noop(monkeypatch):
+    notifiers = [{"id": 7, "agent_id": 25, "friendly_name": "Bot"}]
+    pending, calls = run_tautulli(monkeypatch, notifiers, tautulli_state(), apply=True)
+    assert pending == 0
+    assert {c["cmd"] for c in calls} == {"get_notifiers", "get_notifier_config"}
+
+
+def test_tautulli_drift_applies_trigger_url_and_token_without_printing(monkeypatch, capsys):
+    notifiers = [{"id": 7, "agent_id": 25, "friendly_name": "Bot"}]
+    state = tautulli_state(actions={"on_watched": "0", "on_play": "1"})
+    pending, calls = run_tautulli(monkeypatch, notifiers, state, apply=True, token="s3cret")
+    sent = calls[-1]
+    assert pending == 1 and sent["cmd"] == "set_notifier_config" and sent["notifier_id"] == 7
+    assert (sent["on_watched"], sent["on_play"]) == (1, 0)
+    assert json_loads(sent["on_watched_subject"]) == {"x-webhook-token": "s3cret"}
+    assert "s3cret" not in capsys.readouterr().out
+
+
+def json_loads(text):
+    return cfg.json.loads(text)
+
+
+def test_tautulli_dry_run_does_not_write(monkeypatch):
+    notifiers = [{"id": 7, "agent_id": 25, "friendly_name": "Bot"}]
+    state = tautulli_state(actions={"on_watched": "0", "on_play": "0"})
+    pending, calls = run_tautulli(monkeypatch, notifiers, state, apply=False)
+    assert pending == 1 and "set_notifier_config" not in {c["cmd"] for c in calls}
+
+
+def test_tautulli_creates_missing_notifier(monkeypatch):
+    pending, calls = run_tautulli(monkeypatch, [], tautulli_state(id=9), apply=True)
+    cmds = [c["cmd"] for c in calls]
+    assert pending == 1
+    assert "add_notifier_config" in cmds and cmds[-1] == "set_notifier_config"
+    assert calls[-1]["notifier_id"] == 9 and calls[-1]["webhook_hook"] == TAUTULLI_ENTRY["url"]
+
+
+def test_tautulli_non_webhook_with_same_name_fails(monkeypatch):
+    notifiers = [{"id": 4, "agent_id": 15, "friendly_name": "Bot"}]
+    with pytest.raises(SystemExit):
+        run_tautulli(monkeypatch, notifiers, tautulli_state(), apply=False)
+
+
+def test_tautulli_unsupported_event_fails(monkeypatch):
+    notifiers = [{"id": 7, "agent_id": 25, "friendly_name": "Bot"}]
+    entry = {**TAUTULLI_ENTRY, "events": ["on_nope"]}
+    with pytest.raises(SystemExit):
+        run_tautulli(monkeypatch, notifiers, tautulli_state(), apply=False, entry=entry)
+
+
+def test_tautulli_error_response_is_a_clean_failure(capsys):
+    class Err:
+        def request(self, *args, **kwargs):
+            return FakeResponse({"response": {"result": "error", "message": "Invalid apikey"}})
+
+    with pytest.raises(SystemExit):
+        cfg.tautulli_call(Err(), "http://t", "k", "get_notifiers")
+    assert "Invalid apikey" in capsys.readouterr().err
+
+
+def test_tautulli_body_template_and_conditions_are_compared(monkeypatch, tmp_path):
+    (tmp_path / "b.json").write_text('{"event": "watched"}')
+    entry = {
+        **TAUTULLI_ENTRY,
+        "json_data_file": "b.json",
+        "custom_conditions": [{"parameter": "media_type", "operator": "is", "value": ["movie"]}],
+    }
+    state = tautulli_state()
+    wanted = cfg.tautulli_wanted(state, entry, None, tmp_path / "c.yaml")
+    changes = cfg.tautulli_changes(state, wanted, entry)
+    assert "on_watched JSON data: changed" in changes and "custom_conditions: changed" in changes
+    state["notify_text"]["on_watched"]["body"] = '{ "event":"watched" }'
+    state["custom_conditions"] = entry["custom_conditions"]
+    assert cfg.tautulli_changes(state, wanted, entry) == []
+
+
+@pytest.mark.parametrize(
+    "bad", [{"events": ["watched"]}, {"method": "FETCH"}, {"custom_conditions": "x"}, {"name": 5}]
+)
+def test_tautulli_config_validation(bad):
+    with pytest.raises(SystemExit):
+        cfg.validate_tautulli([{**TAUTULLI_ENTRY, **bad}])

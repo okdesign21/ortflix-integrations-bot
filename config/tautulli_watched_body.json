@@ -1,0 +1,8 @@
+{
+  "event": "watched",
+  "themoviedb_id": "{themoviedb_id}",
+  "imdb_id": "{imdb_id}",
+  "title": "{title}",
+  "year": "{year}",
+  "username": "{username}"
+}
