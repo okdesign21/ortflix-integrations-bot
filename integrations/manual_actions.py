@@ -55,6 +55,42 @@ ACTIONS: dict[str, dict[str, object]] = {
         "args": ["--apply"],
         "description": "Apply missing/und audio-language fixes in place.",
     },
+    "retag_requesters_dry": {
+        "label": "Retag requesters (dry run)",
+        "script": "retag_requesters.py",
+        "args": [],
+        "description": "Preview requester tag normalization and backfill in Radarr/Sonarr.",
+    },
+    "retag_requesters_apply": {
+        "label": "Retag requesters (apply)",
+        "script": "retag_requesters.py",
+        "args": ["--apply"],
+        "description": "Normalize and backfill requester tags in Radarr/Sonarr.",
+    },
+    "retag_watched_dry": {
+        "label": "Retag watched (dry run)",
+        "script": "retag_watched.py",
+        "args": [],
+        "description": "Preview watched tag backfill from Tautulli history.",
+    },
+    "retag_watched_apply": {
+        "label": "Retag watched (apply)",
+        "script": "retag_watched.py",
+        "args": ["--apply"],
+        "description": "Backfill watched tags in Radarr/Sonarr from Tautulli history.",
+    },
+    "webhooks_dry": {
+        "label": "Webhook config (dry run)",
+        "script": "configure_arr_webhooks.py",
+        "args": [],
+        "description": "Show drift between config/arr_webhooks.yaml and live services.",
+    },
+    "webhooks_apply": {
+        "label": "Webhook config (apply)",
+        "script": "configure_arr_webhooks.py",
+        "args": ["--apply"],
+        "description": "Apply config/arr_webhooks.yaml to Radarr/Sonarr/Seerr/Tautulli.",
+    },
 }
 
 

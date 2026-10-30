@@ -8,6 +8,9 @@
 !config
 config/**
 !config/bot_settings.yaml
+!config/arr_webhooks.yaml
+!config/seerr_webhook_payload.json
+!config/tautulli_watched_body.json
 !integrations
 integrations/**
 !integrations/*.py

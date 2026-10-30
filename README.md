@@ -183,6 +183,8 @@ Current actions:
 1. `check_plex_titles.py --summary` (asset-folder audit)
 2. `audio_fix_radarr.py` dry run
 3. `audio_fix_radarr.py --apply` live changes
+4. `retag_requesters.py` and `retag_watched.py` tag backfills, each as dry run and apply
+5. `configure_arr_webhooks.py` webhook configuration, as dry run and apply
 
 Only the configured `TELEGRAM_CHAT_ID` can trigger these actions.
 Manual actions use the same `PLEX_URL` / `PLEX_TOKEN_FILE` / `PLEX_TOKEN`
