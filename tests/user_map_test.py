@@ -92,3 +92,78 @@ def test_nickname_survives_roundtrip_and_sync():
     assert loaded["legal94"]["nickname"] == "Legal"
     result, _ = map_users.plan_sync(loaded, [{"username": "legal94"}], OVERSEERR)
     assert result["legal94"] == {"tag": "a", "manual": False, "nickname": "Legal"}
+
+
+class FakeResponse:
+    def __init__(self, status=200, body=None):
+        self.status_code = status
+        self._body = body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise user_map.requests.HTTPError(
+                f"{self.status_code} for url: http://t/api/v2?apikey=SECRET", response=self
+            )
+
+    def json(self):
+        return self._body
+
+
+def test_tautulli_http_error_hides_api_key(monkeypatch):
+    monkeypatch.setattr(user_map.requests, "get", lambda *a, **k: FakeResponse(500))
+    with pytest.raises(user_map.TautulliError) as exc:
+        user_map.tautulli_call("http://t", "SECRET", "get_users")
+    assert "SECRET" not in str(exc.value)
+    assert exc.value.__cause__ is None
+
+
+def test_tautulli_transport_error_hides_api_key(monkeypatch):
+    def boom(*a, **k):
+        raise user_map.requests.ConnectionError("http://t/api/v2?apikey=SECRET")
+
+    monkeypatch.setattr(user_map.requests, "get", boom)
+    with pytest.raises(user_map.TautulliError) as exc:
+        user_map.tautulli_call("http://t", "SECRET", "get_users")
+    assert "SECRET" not in str(exc.value)
+
+
+def test_tautulli_result_error_is_recoverable_type(monkeypatch):
+    body = {"response": {"result": "error", "message": "no item", "data": {}}}
+    monkeypatch.setattr(user_map.requests, "get", lambda *a, **k: FakeResponse(200, body))
+    with pytest.raises(user_map.TautulliResultError):
+        user_map.tautulli_call("http://t", "k", "get_metadata")
+
+
+def test_resolve_tautulli_error_response_is_not_saved(monkeypatch):
+    monkeypatch.setenv("TAUTULLI_URL", "http://t")
+    monkeypatch.setenv("TAUTULLI_API_KEY", "k")
+    body = {"response": {"result": "error", "message": "bad", "data": {}}}
+    monkeypatch.setattr(user_map.requests, "get", lambda *a, **k: FakeResponse(200, body))
+    assert user_map.resolve_user("someone") == "someone"
+    assert user_map.load_user_map() == {}
+
+
+def test_missing_overseerr_key_is_recoverable(monkeypatch):
+    monkeypatch.delenv("OVERSEERR_API_KEY", raising=False)
+    monkeypatch.delenv("SEERR_API_KEY", raising=False)
+    monkeypatch.setattr(user_map, "fetch_tautulli_users", lambda: [])
+    assert user_map.resolve_user("someone") == "someone"
+    assert user_map.load_user_map() == {}
+
+
+def test_unreadable_map_falls_back_without_overwriting(map_dir):
+    bad = map_dir / user_map.MAP_FILE
+    bad.write_text("{not json", encoding="utf-8")
+    assert user_map.resolve_user("Chen") == "chen"
+    assert bad.read_text(encoding="utf-8") == "{not json"
+
+
+def test_save_failure_falls_back(monkeypatch):
+    monkeypatch.setattr(user_map, "fetch_tautulli_users", lambda: [])
+    monkeypatch.setattr(user_map, "fetch_overseerr_users", lambda: [])
+
+    def deny(*a, **k):
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(user_map, "save_user_map", deny)
+    assert user_map.resolve_user("newbie") == "newbie"

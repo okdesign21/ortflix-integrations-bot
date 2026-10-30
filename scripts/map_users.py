@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import argparse
 import sys
+from contextlib import nullcontext
 
 import requests
 from user_map import (
     fetch_overseerr_users,
     fetch_tautulli_users,
     load_user_map,
+    map_lock,
     map_path,
     propose_tag,
     save_user_map,
@@ -150,7 +152,9 @@ def main() -> int:
         p.add_argument("--apply", action="store_true", help="write changes (default: dry-run)")
         p.set_defaults(func=func)
     args = ap.parse_args()
-    return args.func(args)
+    # Hold the lock across load, modify and save so webhook updates are not overwritten.
+    with map_lock() if getattr(args, "apply", False) else nullcontext():
+        return args.func(args)
 
 
 if __name__ == "__main__":

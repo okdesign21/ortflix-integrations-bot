@@ -21,7 +21,6 @@ import os
 import sys
 from collections import defaultdict
 
-import requests
 from integration_utils import (
     fail,
     load_bot_settings,
@@ -31,7 +30,7 @@ from integration_utils import (
     sonarr_session,
 )
 from retag_requesters import bulk_edit, ensure_tag_id, get_json
-from user_map import resolve_user
+from user_map import TautulliError, TautulliResultError, resolve_user, tautulli_call
 
 HISTORY_PAGE_SIZE = 1000
 
@@ -65,19 +64,6 @@ def watched_label(username: str, suffix: str, persist: bool) -> str:
     return f"{resolve_user(username, persist=persist)}-{suffix}"
 
 
-def tautulli_call(base: str, key: str, cmd: str, **params):
-    r = requests.get(
-        f"{base.rstrip('/')}/api/v2",
-        params={"apikey": key, "cmd": cmd, **params},
-        timeout=60,
-    )
-    r.raise_for_status()
-    body = r.json()["response"]
-    if body.get("result") != "success":
-        fail(f"Tautulli {cmd} failed: {body.get('message')}")
-    return body["data"]
-
-
 def fetch_watched(base: str, key: str, media_type: str) -> dict[str, set]:
     """Return {plex rating key of movie/show: {usernames who fully watched it}}."""
     watched: dict[str, set] = defaultdict(set)
@@ -90,6 +76,7 @@ def fetch_watched(base: str, key: str, media_type: str) -> dict[str, set]:
             media_type=media_type,
             start=start,
             length=HISTORY_PAGE_SIZE,
+            timeout=60,
         )
         rows = data["data"]
         for row in rows:
@@ -108,8 +95,8 @@ def fetch_watched(base: str, key: str, media_type: str) -> dict[str, set]:
 def external_id(base: str, key: str, rating_key: str, prefix: str) -> int | None:
     """Return the external id for a Plex item, or None if it no longer exists in Plex."""
     try:
-        data = tautulli_call(base, key, "get_metadata", rating_key=rating_key)
-    except requests.HTTPError:
+        data = tautulli_call(base, key, "get_metadata", timeout=60, rating_key=rating_key)
+    except TautulliResultError:
         return None
     for guid in data.get("guids") or []:
         if guid.startswith(prefix):
@@ -133,9 +120,12 @@ def plan_tags(
     items, users_by_external, label_ids, suffix, id_field, persist=False
 ) -> dict[str, list[int]]:
     to_tag: dict[str, list[int]] = defaultdict(list)
+    labels: dict[str, str] = {}
     for item in items:
         for user in users_by_external.get(item.get(id_field), ()):
-            label = watched_label(user, suffix, persist)
+            if user not in labels:
+                labels[user] = watched_label(user, suffix, persist)
+            label = labels[user]
             if label_ids.get(label) not in item.get("tags", []):
                 to_tag[label].append(item["id"])
     return to_tag
@@ -181,7 +171,10 @@ def main() -> int:
     triage_label = str(settings["triage_tag_label"]).strip() or "tbd"
     print(f"Mode: {'APPLY' if args.apply else 'DRY-RUN'}")
     for name in ("radarr", "sonarr") if args.app == "both" else (args.app,):
-        backfill_app(name, APPS[name], t_base, t_key, suffix, triage_label, args.apply)
+        try:
+            backfill_app(name, APPS[name], t_base, t_key, suffix, triage_label, args.apply)
+        except TautulliError as exc:
+            fail(str(exc))
     return 0
 
 

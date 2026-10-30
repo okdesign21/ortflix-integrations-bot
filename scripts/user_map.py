@@ -25,21 +25,36 @@ from __future__ import annotations
 import json
 import os
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import requests
 from integration_utils import (
     _clean_username,
-    overseerr_api_key,
     overseerr_base_url,
     overseerr_session,
+    read_overseerr_api_key,
     requester_tag_from_user,
 )
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX platforms have no inter-process lock
+    fcntl = None
 
 MAP_FILE = "user_map.json"
 REPO_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 PAGE_SIZE = 100
 UNKNOWN = "unknown"
+
+
+class TautulliError(ValueError):
+    """Tautulli request failed; the message never contains the request URL or API key."""
+
+
+class TautulliResultError(TautulliError):
+    """Tautulli answered, but with result != success (e.g. unknown rating key)."""
 
 
 def map_dir() -> Path:
@@ -92,26 +107,59 @@ def save_user_map(entries: dict[str, dict], path: Path | None = None) -> Path:
     return path
 
 
+@contextmanager
+def map_lock() -> Iterator[None]:
+    """Exclusive inter-process lock so load-modify-save of the map cannot interleave."""
+    if fcntl is None:
+        yield
+        return
+    lock_path = map_path().with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def tautulli_credentials() -> tuple[str, str] | None:
     base, key = os.getenv("TAUTULLI_URL"), os.getenv("TAUTULLI_API_KEY")
     return (base, key) if base and key else None
+
+
+def tautulli_call(base: str, key: str, cmd: str, timeout: int = 30, **params):
+    """Call the Tautulli API and return its data; errors are raised without the API key."""
+    try:
+        r = requests.get(
+            f"{base.rstrip('/')}/api/v2",
+            params={"apikey": key, "cmd": cmd, **params},
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        body = r.json()["response"]
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else "error"
+        raise TautulliError(f"Tautulli {cmd} failed: HTTP {status}") from None
+    except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+        raise TautulliError(f"Tautulli {cmd} failed: {type(exc).__name__}") from None
+    if body.get("result") != "success":
+        raise TautulliResultError(f"Tautulli {cmd} failed: {body.get('message')}")
+    return body["data"]
 
 
 def fetch_tautulli_users() -> list[dict]:
     creds = tautulli_credentials()
     if not creds:
         raise ValueError("TAUTULLI_URL/TAUTULLI_API_KEY not set")
-    r = requests.get(
-        f"{creds[0].rstrip('/')}/api/v2",
-        params={"apikey": creds[1], "cmd": "get_users"},
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()["response"]["data"]
+    return tautulli_call(creds[0], creds[1], "get_users")
 
 
 def fetch_overseerr_users() -> list[dict]:
-    base, session = overseerr_base_url(), overseerr_session(overseerr_api_key())
+    api_key = read_overseerr_api_key()
+    if not api_key:
+        raise ValueError("OVERSEERR_API_KEY/SEERR_API_KEY not set")
+    base, session = overseerr_base_url(), overseerr_session(api_key)
     users: list[dict] = []
     while True:
         r = session.get(
@@ -144,7 +192,11 @@ def resolve_user(username: str | None, persist: bool = True) -> str:
     key = user_key(username)
     if not key:
         return UNKNOWN
-    entries = load_user_map()
+    try:
+        entries = load_user_map()
+    except ValueError as exc:
+        print(f"[user_map] {exc}; using {key!r}", file=sys.stderr)
+        return key
     if key in entries:
         return entries[key]["tag"]
     try:
@@ -156,9 +208,15 @@ def resolve_user(username: str | None, persist: bool = True) -> str:
     except (requests.RequestException, KeyError, ValueError) as exc:
         print(f"[user_map] Lookup failed for {key!r}, not saved: {exc}", file=sys.stderr)
         return key
-    if persist:
-        entries = load_user_map()
-        entries.setdefault(key, {"tag": tag, "manual": False})
-        save_user_map(entries)
-        print(f"[user_map] Added {key!r} -> {tag!r}")
-    return entries.get(key, {"tag": tag})["tag"]
+    if not persist:
+        return tag
+    try:
+        with map_lock():
+            entries = load_user_map()
+            entries.setdefault(key, {"tag": tag, "manual": False})
+            save_user_map(entries)
+    except (OSError, ValueError) as exc:
+        print(f"[user_map] Could not save {key!r}: {exc}", file=sys.stderr)
+        return tag
+    print(f"[user_map] Added {key!r} -> {entries[key]['tag']!r}")
+    return entries[key]["tag"]
