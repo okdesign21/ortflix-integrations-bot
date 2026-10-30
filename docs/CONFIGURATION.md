@@ -19,6 +19,7 @@ Personal or deployment-specific settings should go in one of these override file
 | `/config/bot_settings.yaml` | Preferred Docker Compose or Kubernetes mounted configuration path. |
 | `/config/bot_settings.yml` | Same as above, YAML extension alternative. |
 | `ORTFLIX_BOT_SETTINGS_FILE` | Explicit path; takes precedence over automatic candidates. |
+
 ## Precedence
 
 The loader deep-merges settings in this order:
