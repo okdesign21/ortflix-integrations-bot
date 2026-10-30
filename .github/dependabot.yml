@@ -7,8 +7,6 @@ updates:
       day: "monday"
       time: "03:00"
     open-pull-requests-limit: 10
-    reviewers:
-      - "okdesign21"
     labels:
       - "dependencies"
       - "github-actions"
@@ -23,8 +21,6 @@ updates:
       day: "monday"
       time: "03:00"
     open-pull-requests-limit: 5
-    reviewers:
-      - "okdesign21"
     labels:
       - "dependencies"
       - "python"
