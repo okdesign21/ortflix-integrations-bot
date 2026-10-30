@@ -178,9 +178,9 @@ python scripts/configure_arr_webhooks.py --apply    # writes changes
 
 Operator scripts run from Telegram `/actions`: `check_plex_titles.py`, `map_users.py`,
 `audio_fix_radarr.py`, `retag_requesters.py`, `retag_watched.py`, `configure_arr_webhooks.py`.
-CI/release tooling (`scan_image.py`, `check_runtime_image.py`, `summarize_trivy_report.py`)
-is shipped in the image but is not an operator action; `release_version.py` and
-`update_dependencies.py` are excluded by `.dockerignore`.
+Host-side CI tooling (`scan_image.py`, `summarize_trivy_report.py`, `release_version.py`,
+`update_dependencies.py`) is excluded from the image by `.dockerignore`; only
+`check_runtime_image.py`, which CI runs inside the image, ships alongside the operator scripts.
 
 ## Tautulli
 

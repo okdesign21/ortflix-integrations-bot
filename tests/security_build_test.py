@@ -645,6 +645,8 @@ def test_docker_context_uses_runtime_allowlist():
         "!scripts/*.py",
         "scripts/update_dependencies.py",
         "scripts/release_version.py",
+        "scripts/scan_image.py",
+        "scripts/summarize_trivy_report.py",
     ]
 
 

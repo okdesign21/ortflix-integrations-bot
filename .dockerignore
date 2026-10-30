@@ -18,3 +18,5 @@ scripts/**
 !scripts/*.py
 scripts/update_dependencies.py
 scripts/release_version.py
+scripts/scan_image.py
+scripts/summarize_trivy_report.py
