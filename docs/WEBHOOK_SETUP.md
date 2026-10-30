@@ -146,8 +146,8 @@ python scripts/configure_arr_webhooks.py --apply    # writes changes
    service URLs follow the same resolution as the other scripts. Tautulli uses `TAUTULLI_API_KEY`
    and optionally `TAUTULLI_URL` (default `http://tautulli:8181`).
 3. Seerr has one webhook agent: declare `enabled`, `embed_poster`, `url` and `events`
-   (notification type names such as `MEDIA_PENDING`). `json_payload_file` is read relative to the
-   config file; omit it to keep the existing payload. Other Seerr options are preserved.
+   (notification type names such as `MEDIA_PENDING`). Seerr's own JSON payload and other options
+   are preserved; the script does not manage the payload.
 4. Tautulli notifiers are matched by `name` and must be Webhook agents; the script never touches
    other notifiers (for example legacy Script agents). `events` are trigger names such as
    `on_watched`, `json_data_file` is the JSON body sent per trigger, and `custom_conditions` is

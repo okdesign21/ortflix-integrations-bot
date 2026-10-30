@@ -227,19 +227,18 @@ def seerr_state(**overrides):
             "webhookUrl": SEERR_ENTRY["url"],
             "customHeaders": [],
             "authHeader": "keep",
-            "jsonPayload": cfg.encode_payload('{"a": 1}'),
         },
     }
     state.update(overrides)
     return state
 
 
-def run_seerr(monkeypatch, state, apply, entry=SEERR_ENTRY, token=None, tmp_path=None):
+def run_seerr(monkeypatch, state, apply, entry=SEERR_ENTRY, token=None):
     session = FakeSession(state)
     monkeypatch.setattr(cfg, "overseerr_base_url", lambda: "http://seerr")
     monkeypatch.setattr(cfg, "overseerr_api_key", lambda: "key")
     monkeypatch.setattr(cfg, "overseerr_session", lambda key: session)
-    pending = cfg.sync_seerr(entry, token, apply, (tmp_path or Path(".")) / "c.yaml")
+    pending = cfg.sync_seerr(entry, token, apply)
     return pending, session.calls
 
 
@@ -260,11 +259,16 @@ def test_seerr_drift_is_applied_and_preserves_other_options(monkeypatch, capsys)
     assert "types: 2 -> 258" in capsys.readouterr().out
 
 
-def test_seerr_payload_file_is_encoded_and_compared(monkeypatch, tmp_path):
-    (tmp_path / "p.json").write_text('{"b": 2}\n')
-    entry = {**SEERR_ENTRY, "json_payload_file": "p.json"}
-    _, calls = run_seerr(monkeypatch, seerr_state(), apply=True, entry=entry, tmp_path=tmp_path)
-    assert cfg.decode_payload(calls[-1][2]["options"]["jsonPayload"]) == '{"b": 2}'
+def test_seerr_payload_is_left_untouched(monkeypatch):
+    state = seerr_state(types=2)
+    state["options"]["jsonPayload"] = "live-default"
+    _, calls = run_seerr(monkeypatch, state, apply=True)
+    assert calls[-1][2]["options"]["jsonPayload"] == "live-default"
+
+
+def test_seerr_payload_file_setting_is_rejected():
+    with pytest.raises(SystemExit):
+        cfg.validate_seerr({**SEERR_ENTRY, "json_payload_file": "p.json"})
 
 
 def test_seerr_unknown_event_is_rejected():
@@ -278,12 +282,6 @@ def test_seerr_token_header_not_printed(monkeypatch, capsys):
         {"key": "x-webhook-token", "value": "s3cret"}
     ]
     assert "s3cret" not in capsys.readouterr().out
-
-
-def test_bundled_seerr_payload_roundtrips():
-    entry = cfg.load_desired(cfg.DEFAULT_CONFIG)["seerr"]
-    text = cfg.load_json_file(entry, "json_payload_file", cfg.DEFAULT_CONFIG, "seerr")
-    assert cfg.decode_payload(cfg.encode_payload(text)) == text.strip()
 
 
 TAUTULLI_ENTRY = {

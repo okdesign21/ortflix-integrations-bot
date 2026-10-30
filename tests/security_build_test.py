@@ -636,7 +636,6 @@ def test_docker_context_uses_runtime_allowlist():
         "config/**",
         "!config/bot_settings.yaml",
         "!config/arr_webhooks.yaml",
-        "!config/seerr_webhook_payload.json",
         "!config/tautulli_watched_body.json",
         "!integrations",
         "integrations/**",
