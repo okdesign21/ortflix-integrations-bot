@@ -415,9 +415,21 @@ def run_radarr_mode():
         print(f"[audio_fix_radarr] Skipping event type: {event!r}")
         sys.exit(0)
 
-    file_path = os.environ.get("radarr_moviefile_path", "")
-    if not file_path or not os.path.exists(file_path):
-        print(f"[audio_fix_radarr] File not found: {file_path!r}")
+    try:
+        from integration_utils import validate_media_path
+    except ImportError:
+        print(
+            "[audio_fix_radarr] Media path validation unavailable; check dependencies.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        file_path = validate_media_path(
+            os.environ.get("radarr_moviefile_path", ""), MOVIES_DIRS, WEBHOOK_EXTENSIONS
+        )
+    except ValueError as error:
+        print(f"[audio_fix_radarr] {error}", file=sys.stderr)
         sys.exit(1)
 
     filename = os.path.basename(file_path)
@@ -448,9 +460,6 @@ def run_radarr_mode():
         telegram_post(msg)
 
     ok = False
-    if ext not in WEBHOOK_EXTENSIONS:
-        print(f"  Format {ext!r} not supported for in-place tagging.")
-        sys.exit(0)
 
     if ext == "mkv":
         ok = fix_mkv(file_path, lang)

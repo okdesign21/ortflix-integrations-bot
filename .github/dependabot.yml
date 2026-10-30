@@ -1,19 +1,5 @@
 version: 2
 updates:
-  - package-ecosystem: "docker"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "03:00"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "docker"
-    allow:
-      - dependency-type: "indirect"
-      - dependency-type: "direct"
-
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -38,6 +24,16 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    groups:
+      python-application:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "pip"
+      - dependency-name: "setuptools"
+      - dependency-name: "wheel"
+      - dependency-name: "build"
+      - dependency-name: "setuptools-scm"
     allow:
       - dependency-type: "indirect"
       - dependency-type: "direct"

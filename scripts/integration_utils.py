@@ -11,16 +11,23 @@ import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import NoReturn, Optional
 
 import requests
 import yaml
+
+from integrations.secret_config import SECRET_NAMES, load_secret
 
 
 # ====== Common Helpers ======
 def _env(name, required=False, default=None):
     """Get environment variable, exit if required but missing."""
-    v = os.getenv(name, default)
+    try:
+        v = load_secret(name) if name in SECRET_NAMES else os.getenv(name, default)
+    except ValueError as error:
+        fail(str(error))
+    if v is None:
+        v = default
     if required and not v:
         print(f"[ERROR] Missing env var: {name}", file=sys.stderr)
         sys.exit(2)
@@ -50,6 +57,31 @@ def env_csv_list(name: str, default_csv: str) -> list[str]:
 def env_keyword_set(name: str, default_csv: str) -> set[str]:
     """Read comma-separated env var into a lowercased keyword set."""
     return {part.lower() for part in env_csv_list(name, default_csv)}
+
+
+def validate_media_path(raw_path: str, roots: list[str], extensions: set[str]) -> str:
+    """Resolve an existing media file within explicitly approved library roots."""
+    try:
+        path = Path(raw_path)
+        if not raw_path or not path.is_absolute() or ".." in path.parts:
+            raise ValueError("Media path must be absolute and contain no traversal")
+        if not isinstance(roots, list) or not roots:
+            raise ValueError("Configure at least one allowed media root")
+        allowed_roots = []
+        for root in roots:
+            if not isinstance(root, str) or not root or not Path(root).is_absolute():
+                raise ValueError("Allowed media roots must be absolute paths")
+            allowed_roots.append(Path(root).resolve())
+        resolved = path.resolve(strict=True)
+        if not any(resolved.is_relative_to(root) for root in allowed_roots):
+            raise ValueError("Media path is outside allowed media roots")
+        if not resolved.is_file() or not os.access(resolved, os.R_OK):
+            raise ValueError("Media path must be a readable regular file")
+        if resolved.suffix.lower().lstrip(".") not in extensions:
+            raise ValueError("Media file extension is not supported")
+        return str(resolved)
+    except (OSError, RuntimeError):
+        raise ValueError("Media path cannot be resolved or accessed") from None
 
 
 def resolve_secret_reference(raw: str | None) -> str | None:
@@ -95,7 +127,9 @@ def resolve_plex_url(default: str) -> str:
 
 def resolve_plex_token(default_token_file: str) -> str:
     """Resolve Plex token from env override or configured token file."""
-    token_file = (os.getenv("PLEX_TOKEN_FILE") or default_token_file or "").strip()
+    if "PLEX_TOKEN_FILE" in os.environ:
+        return _env("PLEX_TOKEN") or ""
+    token_file = (default_token_file or "").strip()
     if token_file:
         path = Path(token_file).expanduser()
         if path.is_file():
@@ -166,7 +200,7 @@ def load_bot_settings() -> dict:
     return settings
 
 
-def fail(msg, code=1):
+def fail(msg, code=1) -> NoReturn:
     """Print error and exit."""
     print(f"[ERROR] {msg}", file=sys.stderr)
     sys.exit(code)
@@ -287,8 +321,15 @@ def sonarr_session(api_key: str) -> requests.Session:
 
 
 def read_overseerr_api_key() -> str | None:
-    """Overseerr API key from OVERSEERR_API_KEY, else SEERR_API_KEY (None if unset)."""
-    return os.getenv("OVERSEERR_API_KEY") or os.getenv("SEERR_API_KEY") or None
+    """Read the key from canonical or legacy environment/secret-file settings.
+
+    Resolution order:
+    1) OVERSEERR_API_KEY
+    2) SEERR_API_KEY
+    3) API_KEY
+    """
+    key = _env("OVERSEERR_API_KEY") or _env("SEERR_API_KEY") or _env("API_KEY")
+    return key or None
 
 
 def overseerr_api_key() -> str:
@@ -525,26 +566,26 @@ def add_tags_to_series(s: requests.Session, base: str, series_id: int, tag_ids: 
 
 
 # ====== Discord ======
-def discord_post(content: str, webhook_url: str = None) -> None:
+def discord_post(content: str, webhook_url: str | None = None) -> None:
     """Post a message to Discord via webhook (optional)."""
-    webhook_url = webhook_url or os.getenv("DISCORD_WEBHOOK_URL")
+    webhook_url = webhook_url or _env("DISCORD_WEBHOOK_URL")
     if not webhook_url:
         return
     try:
         r = requests.post(webhook_url, json={"content": content}, timeout=10)
         if r.status_code != 204:
             print(
-                f"[WARN] Discord send failed: {r.status_code} - {r.text}",
+                f"[WARN] Discord send failed: HTTP {r.status_code}",
                 file=sys.stderr,
             )
-    except Exception as e:
-        print(f"[WARN] Discord exception: {e}", file=sys.stderr)
+    except Exception:
+        print("[WARN] Discord request failed; check connectivity and credentials", file=sys.stderr)
 
 
 # ====== Telegram ======
 def telegram_post(text: str) -> None:
     """Post a message to Telegram if bot token and chat id are available."""
-    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    token = _env("TELEGRAM_BOT_TOKEN") or _env("TELEGRAM_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         return
@@ -555,6 +596,6 @@ def telegram_post(text: str) -> None:
             timeout=10,
         )
         if not r.ok:
-            print(f"[WARN] Telegram send failed: {r.status_code} - {r.text}", file=sys.stderr)
-    except Exception as e:
-        print(f"[WARN] Telegram exception: {e}", file=sys.stderr)
+            print(f"[WARN] Telegram send failed: HTTP {r.status_code}", file=sys.stderr)
+    except Exception:
+        print("[WARN] Telegram request failed; check connectivity and credentials", file=sys.stderr)

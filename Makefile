@@ -1,6 +1,9 @@
-.PHONY: help run test test-watch lint format clean install setup
+.PHONY: help run test test-watch lint format clean install setup trivy-image
 
 IMAGE_NAME ?= ortflix-bot-addons
+DOCKER ?= docker
+PYTHON ?= python
+TRIVY ?= trivy
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -47,10 +50,13 @@ check: lint test ## Run all checks (lint + test)
 
 # Docker-related targets
 docker-build: ## Build Docker image
-	docker build -t $(IMAGE_NAME) .
+	$(DOCKER) build -t $(IMAGE_NAME) .
+
+trivy-image: docker-build ## Build image and scan HIGH/CRITICAL vulnerabilities and secrets
+	$(PYTHON) scripts/scan_image.py "$(IMAGE_NAME)" --trivy "$(TRIVY)"
 
 docker-run: ## Run Docker container locally
-	docker run --rm \
+	$(DOCKER) run --rm \
 		--env-file .env \
 		-p 7777:7777 \
 		$(IMAGE_NAME)

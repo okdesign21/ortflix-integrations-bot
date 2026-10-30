@@ -9,6 +9,9 @@ from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from .script_runner import communicate_with_timeout
+from .secret_config import redact_diagnostic
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 
@@ -109,20 +112,21 @@ async def run_manual_action(action_id: str) -> tuple[bool, str]:
             env=os.environ.copy(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=os.name == "posix",
         )
-        stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(), timeout=MANUAL_ACTION_TIMEOUT
-        )
+        stdout_b, stderr_b = await communicate_with_timeout(proc, MANUAL_ACTION_TIMEOUT)
     except asyncio.TimeoutError:
         return False, (
             f"`{action['label']}` timed out after {MANUAL_ACTION_TIMEOUT}s. "
             "Increase `MANUAL_ACTION_TIMEOUT` if needed."
         )
-    except Exception as err:
-        return False, f"Failed to run `{action['label']}`: `{err}`"
+    except Exception:
+        return False, (
+            f"Failed to run `{action['label']}`. Check service availability and permissions."
+        )
 
-    stdout = (stdout_b or b"").decode("utf-8", errors="replace").strip()
-    stderr = (stderr_b or b"").decode("utf-8", errors="replace").strip()
+    stdout = redact_diagnostic((stdout_b or b"").decode("utf-8", errors="replace").strip())
+    stderr = redact_diagnostic((stderr_b or b"").decode("utf-8", errors="replace").strip())
 
     parts = [f"*Action:* {action['label']}", f"*Exit code:* `{proc.returncode}`"]
     if stdout:

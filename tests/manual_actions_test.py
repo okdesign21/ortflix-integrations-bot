@@ -1,10 +1,12 @@
 """Failure-path tests for Telegram manual actions."""
 
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
 import integrations.manual_actions as manual_actions
+import integrations.script_runner as script_runner
 
 
 class _Process:
@@ -40,9 +42,11 @@ async def test_run_manual_action_reports_nonzero_output(tmp_path: Path, monkeypa
     script = tmp_path / "check_plex_titles.py"
     script.write_text("", encoding="utf-8")
     monkeypatch.setattr(manual_actions, "SCRIPTS_DIR", tmp_path)
+    monkeypatch.setenv("RADARR_API_KEY", "manual-private-marker")
 
     async def _create_process(*args, **kwargs):
-        return _Process(2, b"partial output", b"failure details")
+        assert kwargs["start_new_session"] == (manual_actions.os.name == "posix")
+        return _Process(2, b"partial output manual-private-marker", b"failure details")
 
     monkeypatch.setattr(manual_actions.asyncio, "create_subprocess_exec", _create_process)
 
@@ -52,6 +56,8 @@ async def test_run_manual_action_reports_nonzero_output(tmp_path: Path, monkeypa
     assert "Exit code:* `2`" in message
     assert "partial output" in message
     assert "failure details" in message
+    assert "manual-private-marker" not in message
+    assert "[REDACTED]" in message
 
 
 @pytest.mark.asyncio
@@ -60,9 +66,14 @@ async def test_run_manual_action_reports_timeout(tmp_path: Path, monkeypatch):
     script.write_text("", encoding="utf-8")
     monkeypatch.setattr(manual_actions, "SCRIPTS_DIR", tmp_path)
     monkeypatch.setattr(manual_actions, "MANUAL_ACTION_TIMEOUT", 4)
+    process = MagicMock()
+    process.communicate = AsyncMock(return_value=(b"", b""))
+    process.wait = AsyncMock()
+    signal_process = MagicMock()
+    monkeypatch.setattr(script_runner, "_signal_process", signal_process)
 
     async def _create_process(*args, **kwargs):
-        return _Process(0)
+        return process
 
     async def _wait_for(coro, timeout):
         coro.close()
@@ -75,6 +86,8 @@ async def test_run_manual_action_reports_timeout(tmp_path: Path, monkeypatch):
 
     assert not ok
     assert "timed out after 4s" in message
+    assert signal_process.call_args_list == [call(process), call(process, force=True)]
+    process.wait.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -92,4 +105,5 @@ async def test_run_manual_action_reports_launch_failure(tmp_path: Path, monkeypa
 
     assert not ok
     assert "Failed to run" in message
-    assert "permission denied" in message
+    assert "permission denied" not in message
+    assert "permissions" in message

@@ -5,7 +5,9 @@ Handles webhooks and callback queries using extensible handler registry.
 
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 from typing import Optional, cast
 
 import uvicorn
@@ -13,16 +15,23 @@ from fastapi import FastAPI
 from telegram import Bot
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 
+from integrations.secret_config import SecretConfigurationError, redact_diagnostic
+
+try:
+    from app_config import (
+        TELEGRAM_PORT,
+        TELEGRAM_TOKEN,
+        WEBHOOK_HOST,
+        WEBHOOK_TOKEN,
+        get_telegram_chat_id,
+        validate_config,
+    )
+except SecretConfigurationError as error:
+    print(f"Configuration error: {error}", file=sys.stderr)
+    raise SystemExit(1) from None
+
 import integrations.media_integrity_integration as media_integrity_integration
 import integrations.telegram_callbacks as telegram_callbacks
-from app_config import (
-    TELEGRAM_PORT,
-    TELEGRAM_TOKEN,
-    WEBHOOK_HOST,
-    WEBHOOK_TOKEN,
-    get_telegram_chat_id,
-    validate_config,
-)
 from integrations.manual_actions import build_manual_actions_markup, manual_actions_help_text
 from integrations.overseerr_integration import call_overseerr  # noqa: F401
 from integrations.overseerr_integration import configure_sender as configure_overseerr_sender
@@ -43,13 +52,40 @@ from integrations.tautulli_automation import (
 )
 from integrations.tautulli_automation import router as tautulli_router
 
+
 # === LOGGING ===
-log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, log_level, logging.INFO),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+class _TelegramTokenRedactingFormatter(logging.Formatter):
+    """Sanitize rendered messages and tracebacks without changing the log layout."""
+
+    def __init__(self, formatter: logging.Formatter) -> None:
+        super().__init__()
+        self._formatter = formatter
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_diagnostic(self._formatter.format(record), (TELEGRAM_TOKEN,))
+
+
+def _configure_logging() -> None:
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    for handler in logging.getLogger().handlers:
+        if not isinstance(handler.formatter, _TelegramTokenRedactingFormatter):
+            handler.setFormatter(
+                _TelegramTokenRedactingFormatter(handler.formatter or logging.Formatter())
+            )
+    for name in ("httpx", "httpcore", "telegram"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        server_logger = logging.getLogger(name)
+        server_logger.handlers.clear()
+        server_logger.propagate = True
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 # === GLOBAL STATE ===
@@ -119,10 +155,15 @@ async def lifespan(app: FastAPI):
 
 
 # === FASTAPI APP ===
+try:
+    APP_VERSION = version("ortflix-integrations")
+except PackageNotFoundError:
+    APP_VERSION = "0.0.0+unknown"
+
 app = FastAPI(
     title="Ortflix Integrations API",
     description="REST API for handling Overseerr, Radarr, and media integrity webhooks",
-    version="2.0.0",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 app.include_router(overseerr_router)
@@ -195,6 +236,7 @@ async def health_check():
 
 def main():
     """Main function to start FastAPI server with integrations support."""
+    _configure_logging()
     logger.info(f"Starting Ortflix Integrations API on {WEBHOOK_HOST}:{TELEGRAM_PORT}")
 
     uvicorn.run(
@@ -202,6 +244,7 @@ def main():
         host=WEBHOOK_HOST,
         port=TELEGRAM_PORT,
         log_level="info",
+        log_config=None,
     )
 
 

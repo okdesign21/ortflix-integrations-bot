@@ -66,8 +66,7 @@ async def call_overseerr_api(endpoint: str, method: str = "POST", json_data: dic
         url = f"{OVERSEERR_URL}{endpoint}"
         async with request_func(url, **kwargs) as response:
             if response.status >= 400:
-                error_text = await response.text()
-                raise Exception(f"Overseerr API error {response.status}: {error_text}")
+                raise RuntimeError(f"Overseerr API error {response.status}")
             body = await response.text()
             logger.info("Seerr API %s %s -> HTTP %s", method_upper, endpoint, response.status)
             if not body:

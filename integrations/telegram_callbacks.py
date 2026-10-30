@@ -14,6 +14,7 @@ from .media_integrity_integration import (
     get_latest_corruption_data,
 )
 from .overseerr_integration import call_overseerr, call_overseerr_api
+from .secret_config import redact_diagnostic
 
 logger = logging.getLogger(__name__)
 
@@ -108,9 +109,9 @@ async def handle_redownload(action: str, parts: list[str], chat_id: int, query) 
             chat_id, f"✅ Redownload request created and approved!\nRequest ID: {request_id}"
         )
     except Exception as err:
-        logger.error("Redownload request failed: %s", err)
+        logger.error("Redownload request failed: %s", redact_diagnostic(str(err)))
         await query.answer(text="❌ Failed to create redownload request", show_alert=True)
-        await bot.send_message(chat_id, f"❌ Redownload request failed: {err}")
+        await bot.send_message(chat_id, "❌ Redownload request failed. Check service availability.")
 
 
 async def handle_show_corrupted_files(action: str, parts: list[str], chat_id: int, query) -> None:

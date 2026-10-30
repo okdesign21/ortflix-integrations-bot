@@ -83,6 +83,12 @@ Use the settings file for larger data and shared defaults such as media folders,
 
 Environment variables remain supported for runtime wiring, secrets, and targeted overrides. For large static script settings, prefer `bot_settings.yaml` instead of expanding `.env`.
 
+Credentials also accept `*_FILE` settings for mounted Docker/Kubernetes secrets.
+An explicitly set file takes precedence over the matching environment value;
+invalid or empty files fail startup rather than falling back. See
+[secret files and container examples](docs/CONFIGURATION.md#secret-files) for the
+supported variables, alias precedence, and mount requirements.
+
 ### Core
 
 | Variable | Required | Default | Description |
@@ -112,7 +118,8 @@ Environment variables remain supported for runtime wiring, secrets, and targeted
 | `TAUTULLI_SCRIPT_TIMEOUT` | `180` | Tautulli automation script timeout |
 | `MANUAL_ACTION_TIMEOUT` | `600` | Timeout for Telegram-triggered manual scripts |
 | `MANUAL_ACTION_OUTPUT_LIMIT` | `3500` | Max output chars returned to Telegram |
-| `AUDIO_LANG_MOVIES_DIRS` | `/movies,/movies-hdr` | Bulk audio-language fixer; prefer `config/bot_settings.yaml` for shared defaults |
+| `AUDIO_LANG_MOVIES_DIRS` | `/movies,/movies-hdr` | Radarr bulk scan and allowed webhook roots; prefer `audio_fix.radarr.movies_dirs` in settings |
+| `AUDIO_LANG_TV_DIRS` | Empty (fail closed) | Allowed Sonarr webhook roots; configure `audio_fix.sonarr.tv_dirs` before processing episodes |
 | `PLEX_URL` | `shared.plex.url` | Shared Plex base URL for Telegram/manual actions and audio-language post-processing |
 | `PLEX_TOKEN_FILE` | `shared.plex.token_file` | Shared Plex token file (Docker compose) |
 | `PLEX_TOKEN` | - | Shared Plex token env fallback (k8s/manual runs) |
@@ -188,7 +195,23 @@ default Plex and service URLs per deployment.
 ./run-local.sh test
 ./run-local.sh lint
 ./run-local.sh format
+make trivy-image
 ```
+
+With GNU Make, Python, Docker and Trivy available on `PATH`, `make trivy-image`
+builds `ortflix-bot-addons` and scans it using the CI policy:
+HIGH/CRITICAL vulnerabilities (including unfixed) and secrets. It prints only the
+sanitized Trivy summary and returns nonzero when the scan fails or reports findings.
+Docker and Trivy must be installed and available on `PATH`. Override their commands
+when needed, for example `make trivy-image DOCKER=docker.exe TRIVY=trivy.exe` or
+`make trivy-image PYTHON=py`. The target and Python wrapper work with GNU Make on
+Windows and Linux; the repository's existing helper targets may still require a
+POSIX shell.
+
+Exact Python build-tool versions live in [build-constraints.txt](build-constraints.txt).
+Docker and CI share those constraints, including isolated package builds. Keep
+application dependencies and compatibility minimums in `pyproject.toml`; see
+[build-tool configuration](docs/CONFIGURATION.md#python-build-tools).
 
 ### Webhook Test
 
@@ -228,6 +251,54 @@ or modify mounted media files. Mount the media and configuration paths required 
 your scripts, and use Docker secrets for tokens and API keys where possible. The
 container entrypoint is `python -m bot`.
 
+Python build tools are confined to the builder stage; pip, setuptools, wheel and
+ensurepip's bundled installer are absent from the final runtime filesystem. CI
+requires an offline import/media smoke check before scanning or publishing that
+image. Rebuild to change Python dependencies; do not install them into a running
+container. OS/media package vulnerabilities remain a separate scan requirement.
+
+### Native Media Runtime
+
+The image uses the digest-pinned official `opensuse/tumbleweed` image and installs
+Python 3.14, FFmpeg, MKVToolNix and their runtime libraries together with `zypper`.
+There are no copied third-party binaries or locally compiled media packages.
+RPM package signatures are checked by the package manager, and the installed
+RPM database is retained for vulnerability scanning. Explicit package pins
+select FFmpeg 8.1.3, MKVToolNix 102.0 and libxml2 2.15.4, together with updated
+Qt, util-linux, systemd, ncurses and ACL libraries.
+
+Current CI validates Linux x86-64 (amd64). Other architectures offered by the
+upstream base have not been certified for this application.
+Tumbleweed is a rolling distribution. Update the pinned base digest and direct
+RPM versions together when refreshing the runtime; mirror rotation can remove
+old package revisions and intentionally cause a stale build to fail. Transitive
+dependencies are resolved by the vendor package manager. Build with
+`--pull --no-cache` to avoid reusing a cached installation layer. The resolved
+image, not its source recipe alone, is the security artifact.
+
+Build and runtime stages share the same native package baseline. Only the
+builder installs pip and creates a temporary build environment; the final stage
+receives installed application packages, not pip, the wheelhouse or build tools.
+The bot entrypoint, media mounts and root execution policy are unchanged.
+
+P3-006 remains open until an actual image build, offline smoke check and blocking
+Trivy scan pass. The smoke check covers Matroska probe/language edits and MP4
+stream-copy language edits, without networking or host volumes:
+
+```bash
+docker build --pull --no-cache -t ortflix-bot-addons:scan .
+docker run --rm --network none --entrypoint python ortflix-bot-addons:scan -m scripts.check_runtime_image
+python scripts/scan_image.py ortflix-bot-addons:scan
+```
+
+The local scan command and CI require Trivy to recognize `opensuse-tumbleweed`
+and report the Python, FFmpeg, MKVToolNix and libxml2 RPM packages. Missing native
+scan coverage fails closed, even when the scanner reports no vulnerabilities.
+Fewer findings alone do not establish remediation.
+Do not remove package metadata, suppress findings or enable `ignore-unfixed`
+to force publication. CI scans and publishes the same candidate image without
+rebuilding it; a newer package version alone is not proof of a patched image.
+
 Use `config/bot_settings.yaml` for default service URLs and Plex settings in Docker
 deployments. Keep environment variables for secrets and per-container overrides only.
 
@@ -242,6 +313,39 @@ For custom host layouts, mount your media roots and set `AUDIO_LANG_MOVIES_DIRS`
 The release workflow runs on tags matching `v*`. For the planned release, create
 `v*.*.*`; setuptools-scm will publish package version and the Docker workflow
 will publish the tagged image plus `latest`.
+
+## Dependency Maintenance
+
+Security checks build and scan the default branch nightly at 03:00 UTC; they do
+not deploy or inspect the live server. Weekly update proposals run Mondays at
+04:00 UTC, or manually through the **Weekly Dependency Updates** workflow.
+
+Two fixed branches keep proposals separate: `automation/dependencies-runtime`
+updates the base digest and RPM pins together, while
+`automation/dependencies-build-tools` updates Python build constraints to stable,
+non-yanked releases compatible with Python 3.11 and 3.14. Existing Python and
+FFmpeg package streams stay unchanged. Missing packages, unsupported RPM editions
+and downgrades fail for manual investigation instead of changing the runtime.
+
+No tracked version/digest changes means no PR. New changes refresh the existing
+update PR rather than creating duplicates. Bot-created PRs explicitly dispatch
+the existing lint and security workflows, including a blocking history secret
+scan of the validated base/head commit range. Dependabot continues weekly application
+and GitHub Actions updates, with automatic approval retained; merging is manual.
+Required status checks must be configured in the repository's branch rules.
+
+Enable **Settings > Actions > General > Allow GitHub Actions to create and approve
+pull requests**. Approval uses the existing `DEPENDABOT_PAT` secret when configured,
+otherwise `GITHUB_TOKEN`; the token must be allowed to approve reviews. Scheduled
+workflows start after these changes reach the default branch. This source change
+does not cancel auto-merge already enabled on an existing PR.
+
+The updater supports read-only discovery without modifying files:
+
+```bash
+python scripts/update_dependencies.py --group runtime
+python scripts/update_dependencies.py --group build-tools
+```
 
 ## Related Projects
 

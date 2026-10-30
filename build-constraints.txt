@@ -1,0 +1,5 @@
+pip==26.2.1
+setuptools==84.0.0
+wheel==0.48.0
+build==1.6.1
+setuptools-scm==10.3.4
