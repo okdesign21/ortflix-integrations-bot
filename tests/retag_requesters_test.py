@@ -7,6 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import requests  # noqa: E402
+import retag_requesters  # noqa: E402
 from retag_requesters import (  # noqa: E402
     build_overseerr_index,
     canonical_requested_label,
@@ -53,3 +55,24 @@ def test_overseerr_index_orders_and_dedups():
         },
     ]
     assert build_overseerr_index(reqs, "tmdbId", "movie") == {5: ["a-requested", "b-requested"]}
+
+
+def test_requester_cli_reports_upstream_failure_without_traceback(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["retag_requesters.py", "--app", "radarr"])
+    monkeypatch.setattr(
+        retag_requesters,
+        "load_bot_settings",
+        lambda: {"overseerr_requester_tagging": {"source_tag_label": "overseerr"}},
+    )
+    monkeypatch.setattr(retag_requesters, "overseerr_api_key", lambda: "private-marker")
+
+    def unavailable():
+        raise requests.ConnectionError("https://service.invalid?apikey=private-marker")
+
+    monkeypatch.setattr(retag_requesters, "overseerr_base_url", unavailable)
+
+    assert retag_requesters.main() == 1
+    error = capsys.readouterr().err
+    assert "Requester backfill failed (ConnectionError)" in error
+    assert "private-marker" not in error
+    assert "Traceback" not in error

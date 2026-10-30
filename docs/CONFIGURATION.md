@@ -112,6 +112,11 @@ maps each Plex username to the tag name for that person so both match:
 ```
 
 - `"manual": true` locks an entry; automatic sync never changes it.
+- Username keys are case-insensitive but preserve punctuation; tag values are
+  slugified for Radarr/Sonarr. For example, `sam_one` and `sam-one` remain
+  distinct map identities even though both produce the `sam-one` tag by default.
+- If an older map already slugified punctuation in a username key, restore that
+  key to the exact Plex username before relying on its mapping.
 - `"nickname"` is an optional label for humans; nothing uses it yet.
 - When a user is not in the map, the bot matches them to Overseerr (Plex username or
   email, via Tautulli) and adds them as an automatic entry. This needs `TAUTULLI_URL`

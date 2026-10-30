@@ -21,6 +21,7 @@ import os
 import sys
 from collections import defaultdict
 
+import requests
 from integration_utils import (
     fail,
     load_bot_settings,
@@ -30,7 +31,7 @@ from integration_utils import (
     sonarr_session,
 )
 from retag_requesters import bulk_edit, ensure_tag_id, get_json
-from user_map import TautulliError, TautulliResultError, resolve_user, tautulli_call
+from user_map import TautulliResultError, resolve_user, tautulli_call
 
 HISTORY_PAGE_SIZE = 1000
 
@@ -166,15 +167,25 @@ def main() -> int:
         if not os.getenv(APPS[name]["api_key_env"]):
             fail(f"Missing {APPS[name]['api_key_env']} in environment")
 
-    settings = load_bot_settings()["tautulli_watched"]
-    suffix = str(settings["watched_tag_suffix"]).strip().lower() or "watched"
-    triage_label = str(settings["triage_tag_label"]).strip() or "tbd"
-    print(f"Mode: {'APPLY' if args.apply else 'DRY-RUN'}")
-    for name in ("radarr", "sonarr") if args.app == "both" else (args.app,):
-        try:
+    try:
+        settings = load_bot_settings()["tautulli_watched"]
+        suffix = str(settings["watched_tag_suffix"]).strip().lower() or "watched"
+        triage_label = str(settings["triage_tag_label"]).strip() or "tbd"
+        print(f"Mode: {'APPLY' if args.apply else 'DRY-RUN'}")
+        for name in ("radarr", "sonarr") if args.app == "both" else (args.app,):
             backfill_app(name, APPS[name], t_base, t_key, suffix, triage_label, args.apply)
-        except TautulliError as exc:
-            fail(str(exc))
+    except (OSError, ValueError, requests.RequestException, KeyError, TypeError) as exc:
+        detail = (
+            f"HTTP {exc.response.status_code}"
+            if isinstance(exc, requests.HTTPError) and exc.response is not None
+            else type(exc).__name__
+        )
+        print(
+            f"Watched backfill failed ({detail}); check service availability, credentials, "
+            "and response data.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

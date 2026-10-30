@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -66,6 +68,75 @@ def test_resolve_lookup_failure_not_saved(monkeypatch):
 
 def test_non_ascii_user_is_unknown():
     assert user_map.resolve_user("レゼ") == "unknown"
+
+
+def test_username_identity_preserves_punctuation_and_normalizes_case():
+    assert user_map.user_key("Sam_One") == "sam_one"
+    assert user_map.user_key("SAM-ONE") == "sam-one"
+    assert user_map.user_key("sam_one") != user_map.user_key("sam-one")
+
+
+def test_distinct_punctuated_usernames_keep_separate_map_entries():
+    user_map.save_user_map(
+        {
+            "sam_one": {"tag": "underscore-user", "manual": True},
+            "sam-one": {"tag": "hyphen-user", "manual": True},
+        }
+    )
+
+    assert user_map.resolve_user("Sam_One") == "underscore-user"
+    assert user_map.resolve_user("sam-one") == "hyphen-user"
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "chencoh2",
+        {"tag": 42},
+        {"tag": "chen", "manual": "yes"},
+        {"tag": "chen", "nickname": ["Chen"]},
+    ],
+)
+def test_load_rejects_malformed_user_entries(map_dir, entry):
+    path = map_dir / user_map.MAP_FILE
+    path.write_text(json.dumps({"users": {"chen": entry}}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid user map"):
+        user_map.load_user_map(path)
+
+
+def test_load_rejects_case_insensitive_duplicate_identities(map_dir):
+    path = map_dir / user_map.MAP_FILE
+    path.write_text(
+        '{"users":{"Chen":{"tag":"first"},"chen":{"tag":"second"}}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate username identity"):
+        user_map.load_user_map(path)
+
+
+def test_map_cli_reports_invalid_map_without_traceback(map_dir, monkeypatch, capsys):
+    (map_dir / user_map.MAP_FILE).write_text("{invalid", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["map_users.py", "show"])
+
+    assert map_users.main() == 1
+    assert "Map command failed (ValueError)" in capsys.readouterr().err
+
+
+def test_map_cli_reports_lock_failure_without_traceback(monkeypatch, capsys):
+    @contextmanager
+    def denied_lock():
+        raise PermissionError("private path")
+        yield
+
+    monkeypatch.setattr(map_users, "map_lock", denied_lock)
+    monkeypatch.setattr(sys, "argv", ["map_users.py", "set", "chen", "chen", "--apply"])
+
+    assert map_users.main() == 1
+    error = capsys.readouterr().err
+    assert "Map command failed (PermissionError)" in error
+    assert "private path" not in error
 
 
 def test_sync_keeps_locked_and_updates_auto():

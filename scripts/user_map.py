@@ -70,8 +70,10 @@ def map_path() -> Path:
 
 
 def user_key(name: str | None) -> str | None:
-    """Normalized map key for a Plex username (None if it has no ASCII-safe characters)."""
-    return _clean_username(name)
+    """Case-insensitive Plex identity key that preserves username punctuation."""
+    if not isinstance(name, str) or not name.strip():
+        return None
+    return name.strip().casefold()
 
 
 def load_user_map(path: Path | None = None) -> dict[str, dict]:
@@ -87,11 +89,24 @@ def load_user_map(path: Path | None = None) -> dict[str, dict]:
         raise ValueError(f"Invalid user map {path}: expected an object with a 'users' object")
     entries: dict[str, dict] = {}
     for name, entry in users.items():
-        key, tag = user_key(name), user_key((entry or {}).get("tag"))
-        if key and tag:
-            entries[key] = {"tag": tag, "manual": bool(entry.get("manual", False))}
-            if entry.get("nickname"):
-                entries[key]["nickname"] = str(entry["nickname"]).strip()
+        key = user_key(name)
+        if not key or not isinstance(entry, dict):
+            raise ValueError(f"Invalid user map {path}: each user must have a valid entry object")
+        raw_tag = entry.get("tag")
+        tag = _clean_username(raw_tag) if isinstance(raw_tag, str) else None
+        manual = entry.get("manual", False)
+        nickname = entry.get("nickname")
+        if (
+            not tag
+            or not isinstance(manual, bool)
+            or (nickname is not None and not isinstance(nickname, str))
+        ):
+            raise ValueError(f"Invalid user map {path}: each entry needs a valid tag and fields")
+        if key in entries:
+            raise ValueError(f"Invalid user map {path}: duplicate username identity")
+        entries[key] = {"tag": tag, "manual": manual}
+        if nickname and nickname.strip():
+            entries[key]["nickname"] = nickname.strip()
     return entries
 
 
@@ -176,11 +191,11 @@ def fetch_overseerr_users() -> list[dict]:
 
 def propose_tag(plex_username: str, email: str | None, overseerr_users: list[dict]) -> str:
     """Tag name for a Plex user: their Overseerr tag if matched, else their own slug."""
-    own = user_key(plex_username) or UNKNOWN
-    name, mail = plex_username.lower(), (email or "").lower()
+    own = _clean_username(plex_username) or UNKNOWN
+    name, mail = plex_username.casefold(), (email or "").casefold()
     for user in overseerr_users:
-        plex_match = user.get("plexUsername") and user["plexUsername"].lower() == name
-        email_match = mail and (user.get("email") or "").lower() == mail
+        plex_match = user.get("plexUsername") and user["plexUsername"].casefold() == name
+        email_match = mail and (user.get("email") or "").casefold() == mail
         if plex_match or email_match:
             tag = requester_tag_from_user(user).removesuffix("-requested")
             return own if tag == UNKNOWN else tag
@@ -192,11 +207,12 @@ def resolve_user(username: str | None, persist: bool = True) -> str:
     key = user_key(username)
     if not key:
         return UNKNOWN
+    fallback = _clean_username(username) or UNKNOWN
     try:
         entries = load_user_map()
     except ValueError as exc:
-        print(f"[user_map] {exc}; using {key!r}", file=sys.stderr)
-        return key
+        print(f"[user_map] {exc}; using {fallback!r}", file=sys.stderr)
+        return fallback
     if key in entries:
         return entries[key]["tag"]
     try:
@@ -207,7 +223,7 @@ def resolve_user(username: str | None, persist: bool = True) -> str:
         tag = propose_tag(username, email, fetch_overseerr_users())
     except (requests.RequestException, KeyError, ValueError) as exc:
         print(f"[user_map] Lookup failed for {key!r}, not saved: {exc}", file=sys.stderr)
-        return key
+        return fallback
     if not persist:
         return tag
     try:

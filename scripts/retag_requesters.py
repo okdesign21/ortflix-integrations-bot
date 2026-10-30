@@ -22,6 +22,7 @@ import re
 import sys
 from collections import defaultdict
 
+import requests
 from integration_utils import (
     DEFAULT_REQUESTER_LABEL,
     _clean_username,
@@ -207,23 +208,38 @@ def main() -> int:
     ap.add_argument("--app", choices=["radarr", "sonarr", "both"], default="both")
     args = ap.parse_args()
 
-    settings = load_bot_settings()["overseerr_requester_tagging"]
-    source_label = str(settings["source_tag_label"])
-    o_base = overseerr_base_url()
-    o_session = overseerr_session(overseerr_api_key())
-    requests_ = fetch_overseerr_requests(o_base, o_session)
-    print(f"Mode: {'APPLY' if args.apply else 'DRY-RUN'}; {len(requests_)} Overseerr requests")
+    try:
+        settings = load_bot_settings()["overseerr_requester_tagging"]
+        source_label = str(settings["source_tag_label"])
+        o_base = overseerr_base_url()
+        o_session = overseerr_session(overseerr_api_key())
+        requests_ = fetch_overseerr_requests(o_base, o_session)
+        print(f"Mode: {'APPLY' if args.apply else 'DRY-RUN'}; {len(requests_)} Overseerr requests")
 
-    for name in ("radarr", "sonarr") if args.app == "both" else (args.app,):
-        cfg = APPS[name]
-        key = os.getenv(cfg["api_key_env"])
-        if not key:
-            fail(f"Missing {cfg['api_key_env']} in environment")
-        base, session = cfg["base_url"](), cfg["session"](key)
-        print(f"== {name} ({base})")
-        normalize(session, base, cfg, args.apply)
-        index = build_overseerr_index(requests_, cfg["overseerr_id_field"], cfg["overseerr_type"])
-        backfill(session, base, cfg, index, source_label, args.default_tag, args.apply)
+        for name in ("radarr", "sonarr") if args.app == "both" else (args.app,):
+            cfg = APPS[name]
+            key = os.getenv(cfg["api_key_env"])
+            if not key:
+                fail(f"Missing {cfg['api_key_env']} in environment")
+            base, session = cfg["base_url"](), cfg["session"](key)
+            print(f"== {name} ({base})")
+            normalize(session, base, cfg, args.apply)
+            index = build_overseerr_index(
+                requests_, cfg["overseerr_id_field"], cfg["overseerr_type"]
+            )
+            backfill(session, base, cfg, index, source_label, args.default_tag, args.apply)
+    except (OSError, ValueError, requests.RequestException, KeyError, TypeError) as exc:
+        detail = (
+            f"HTTP {exc.response.status_code}"
+            if isinstance(exc, requests.HTTPError) and exc.response is not None
+            else type(exc).__name__
+        )
+        print(
+            f"Requester backfill failed ({detail}); check service availability, credentials, "
+            "and response data.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

@@ -21,6 +21,7 @@ import sys
 from contextlib import nullcontext
 
 import requests
+from integration_utils import _clean_username
 from user_map import (
     fetch_overseerr_users,
     fetch_tautulli_users,
@@ -85,11 +86,7 @@ def _finish(entries: dict[str, dict], changes: list[str], apply: bool) -> int:
 
 
 def cmd_sync(args) -> int:
-    try:
-        tautulli, overseerr = fetch_tautulli_users(), fetch_overseerr_users()
-    except (requests.RequestException, KeyError, ValueError) as exc:
-        print(f"Sync failed: {exc}", file=sys.stderr)
-        return 1
+    tautulli, overseerr = fetch_tautulli_users(), fetch_overseerr_users()
     entries, changes = plan_sync(load_user_map(), tautulli, overseerr)
     locked = sum(1 for e in entries.values() if e["manual"])
     print(f"{len(entries)} users in map ({locked} locked)")
@@ -97,9 +94,12 @@ def cmd_sync(args) -> int:
 
 
 def cmd_set(args) -> int:
-    key, tag = user_key(args.plex), user_key(args.tag)
+    key, tag = user_key(args.plex), _clean_username(args.tag)
     if not key or not tag:
-        print("Both names need at least one ASCII letter or digit.", file=sys.stderr)
+        print(
+            "Plex username must not be empty and tag must contain an ASCII letter or digit.",
+            file=sys.stderr,
+        )
         return 1
     entries = load_user_map()
     old = entries.get(key)
@@ -153,8 +153,16 @@ def main() -> int:
         p.set_defaults(func=func)
     args = ap.parse_args()
     # Hold the lock across load, modify and save so webhook updates are not overwritten.
-    with map_lock() if getattr(args, "apply", False) else nullcontext():
-        return args.func(args)
+    try:
+        with map_lock() if getattr(args, "apply", False) else nullcontext():
+            return args.func(args)
+    except (OSError, ValueError, requests.RequestException, KeyError, TypeError) as exc:
+        print(
+            f"Map command failed ({type(exc).__name__}); check map permissions "
+            "and service configuration.",
+            file=sys.stderr,
+        )
+        return 1
 
 
 if __name__ == "__main__":
