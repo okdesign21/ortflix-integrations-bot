@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -16,13 +15,17 @@ import integration_utils  # noqa: E402
 def test_resolve_plex_url_prefers_shared_name(monkeypatch):
     monkeypatch.setenv("PLEX_URL", "http://plex-shared:32400/")
 
-    assert integration_utils.resolve_plex_url("http://localhost:32400") == "http://plex-shared:32400"
+    assert (
+        integration_utils.resolve_plex_url("http://localhost:32400") == "http://plex-shared:32400"
+    )
 
 
 def test_resolve_plex_url_uses_config_default(monkeypatch):
     monkeypatch.delenv("PLEX_URL", raising=False)
 
-    assert integration_utils.resolve_plex_url("http://config-plex:32400") == "http://config-plex:32400"
+    assert (
+        integration_utils.resolve_plex_url("http://config-plex:32400") == "http://config-plex:32400"
+    )
 
 
 def test_resolve_plex_token_prefers_file(monkeypatch, tmp_path: Path):
