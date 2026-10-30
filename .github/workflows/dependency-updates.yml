@@ -45,7 +45,7 @@ jobs:
         run: python scripts/update_dependencies.py --group "$UPDATE_GROUP" --apply
       - name: Create or refresh update PR
         id: pr
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ github.token }}
           branch: ${{ env.UPDATE_BRANCH }}
