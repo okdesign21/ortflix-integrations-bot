@@ -1,4 +1,4 @@
-FROM opensuse/tumbleweed@sha256:d95ddcc0ae62a9df3e6e424cb39a00ba74ef1744b02d7914bdbec4c7657baf01 AS base
+FROM opensuse/tumbleweed@sha256:06cc97d1a7101be090f02813d1d1f08d28640c1549f66a0ff0e4146e323d955d AS base
 
 ENV PATH=/usr/local/bin:$PATH
 
