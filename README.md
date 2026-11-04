@@ -31,6 +31,10 @@ Automation scripts live under `scripts/` and read static defaults from `config/b
 - Typed validation and regression replay fixtures for webhook payloads
 - Structured JSON webhook logs with request IDs returned in `X-Request-ID`
 
+Sonarr's `series.originalLanguage` must be an object or `null` when supplied;
+malformed values return HTTP 422 before automation is scheduled. Unknown vendor
+fields are preserved.
+
 ## Webhook Setup
 
 Use the setup guide for webhook wiring and ownership decisions:

@@ -54,10 +54,18 @@ class RadarrWebhook(WebhookModel):
     movie_file: dict[str, Any] = Field(default_factory=dict, alias="movieFile")
 
 
+class SonarrLanguage(WebhookModel):
+    name: Optional[str] = None
+
+
+class SonarrSeries(WebhookModel):
+    original_language: Optional[SonarrLanguage] = Field(None, alias="originalLanguage")
+
+
 class SonarrWebhook(WebhookModel):
     event_type: Optional[str] = Field(None, alias="eventType")
     event: Optional[str] = None
-    series: dict[str, Any] = Field(default_factory=dict)
+    series: SonarrSeries = Field(default_factory=SonarrSeries)
     episode_file: dict[str, Any] = Field(default_factory=dict, alias="episodeFile")
 
 

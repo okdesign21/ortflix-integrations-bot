@@ -93,6 +93,14 @@ async def test_replay_sample_webhooks(monkeypatch, caplog):
         ),
         ("/api/v1/webhooks/radarr", {"eventType": [], "movie": {}}),
         ("/api/v1/webhooks/sonarr", {"eventType": "Download", "series": []}),
+        (
+            "/api/v1/webhooks/sonarr",
+            {"eventType": "Download", "series": {"originalLanguage": "English"}},
+        ),
+        (
+            "/api/v1/webhooks/sonarr",
+            {"eventType": "Download", "series": {"originalLanguage": ["English"]}},
+        ),
         ("/api/v1/webhooks/tautulli", {"event": [], "username": "sample-user"}),
     ],
 )
@@ -107,6 +115,9 @@ async def test_automation_webhooks_reject_invalid_typed_fields(monkeypatch, path
     for module in (media_integrity, overseerr, radarr, sonarr, tautulli):
         monkeypatch.setattr(module, "_webhook_token_getter", lambda: WEBHOOK_TOKEN)
 
+    execute_sonarr = AsyncMock()
+    monkeypatch.setattr(sonarr, "_execute_sonarr_script", execute_sonarr)
+
     async with AsyncClient(
         transport=ASGITransport(app=bot.app),
         base_url="http://test",
@@ -114,3 +125,23 @@ async def test_automation_webhooks_reject_invalid_typed_fields(monkeypatch, path
         response = await client.post(path, json=payload, headers=HEADERS)
 
     assert response.status_code == 422
+    execute_sonarr.assert_not_awaited()
+
+
+@pytest.mark.parametrize("language", [None, {}, {"name": "English", "id": 1}])
+def test_sonarr_language_validation_preserves_vendor_fields(language):
+    from integrations.payloads import _normalize_sonarr_payload
+    from integrations.sonarr_automation import _build_sonarr_script_env
+
+    raw_payload = {
+        "eventType": "Download",
+        "series": {"id": 202, "originalLanguage": language, "customField": "retained"},
+        "customMetadata": {"source": "fixture"},
+    }
+
+    payload = _normalize_sonarr_payload(raw_payload)
+    env = _build_sonarr_script_env(payload, "Download")
+
+    assert payload == raw_payload
+    if language and language.get("name"):
+        assert env["sonarr_series_originallanguage"] == language["name"]
