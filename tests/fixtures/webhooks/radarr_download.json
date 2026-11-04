@@ -1,0 +1,17 @@
+{
+  "eventType": "Download",
+  "movie": {
+    "id": 101,
+    "tmdbId": 12345,
+    "imdbId": "tt1234567",
+    "title": "Sample Movie",
+    "year": 2024,
+    "path": "/movies/Sample Movie (2024)"
+  },
+  "movieFile": {
+    "path": "/movies/Sample Movie (2024)/Sample.Movie.2024.mkv"
+  },
+  "customMetadata": {
+    "source": "fixture"
+  }
+}

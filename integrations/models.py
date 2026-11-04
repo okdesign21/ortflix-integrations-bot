@@ -1,13 +1,15 @@
 """Pydantic models for Ortflix Telegram Bot."""
 
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class MediaInfo(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+class WebhookModel(BaseModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
 
+
+class MediaInfo(WebhookModel):
     media_type: Optional[str] = Field(None, alias="media_type")
     tmdb_id: Optional[int] = Field(None, alias="tmdbId")
     tvdb_id: Optional[int] = Field(None, alias="tvdbId")
@@ -15,18 +17,14 @@ class MediaInfo(BaseModel):
     status_4k: Optional[str] = Field(None, alias="status4k")
 
 
-class RequestInfo(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class RequestInfo(WebhookModel):
     request_id: Optional[str] = Field(None, alias="request_id")
     requested_by_username: Optional[str] = Field("Someone", alias="requestedBy_username")
     requested_by_email: Optional[str] = Field(None, alias="requestedBy_email")
     requested_by_avatar: Optional[str] = Field(None, alias="requestedBy_avatar")
 
 
-class OverseerrWebhook(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class OverseerrWebhook(WebhookModel):
     notification_type: str
     event: Optional[str] = None
     subject: Optional[str] = "Unknown title"
@@ -36,23 +34,34 @@ class OverseerrWebhook(BaseModel):
     request: Optional[RequestInfo] = None
 
 
-class CorruptedFileInfo(BaseModel):
+class CorruptedFileInfo(WebhookModel):
     path: str
     size: str
     error: str
 
 
-class MediaIntegrityWebhook(BaseModel):
+class MediaIntegrityWebhook(WebhookModel):
     notification_type: str
     summary_message: Optional[str] = "Media integrity check alert"
     count: int = 0
     files: list[CorruptedFileInfo] = Field(default_factory=list)
 
 
-class RadarrWebhook(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class RadarrWebhook(WebhookModel):
     event_type: Optional[str] = Field(None, alias="eventType")
     event: Optional[str] = None
-    movie: dict = Field(default_factory=dict)
-    movie_file: dict = Field(default_factory=dict, alias="movieFile")
+    movie: dict[str, Any] = Field(default_factory=dict)
+    movie_file: dict[str, Any] = Field(default_factory=dict, alias="movieFile")
+
+
+class SonarrWebhook(WebhookModel):
+    event_type: Optional[str] = Field(None, alias="eventType")
+    event: Optional[str] = None
+    series: dict[str, Any] = Field(default_factory=dict)
+    episode_file: dict[str, Any] = Field(default_factory=dict, alias="episodeFile")
+
+
+class TautulliWebhook(WebhookModel):
+    event: Optional[str] = None
+    trigger: Optional[str] = None
+    notification_type: Optional[str] = None

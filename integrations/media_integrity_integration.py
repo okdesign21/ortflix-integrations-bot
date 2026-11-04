@@ -5,11 +5,12 @@ import os
 import time
 from typing import Any, Awaitable, Callable, Optional
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from .models import MediaIntegrityWebhook
 from .webhook_auth import require_valid_webhook_token
+from .webhook_logging import webhook_log_context
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ def _prune_corruption_cache() -> None:
 @router.post("/api/v1/webhooks/media-check")
 async def media_integrity_webhook(
     payload: MediaIntegrityWebhook,
+    request: Request,
     x_webhook_token: Optional[str] = Header(None),
 ):
     """Handle media integrity check alerts."""
@@ -82,7 +84,16 @@ async def media_integrity_webhook(
             )
 
         if payload.count == 0:
-            logger.info("Media check: no corrupted files found")
+            logger.info(
+                "Media integrity webhook contained no corrupted files",
+                extra=webhook_log_context(
+                    request,
+                    "media-integrity",
+                    event="webhook.accepted",
+                    notification_type=payload.notification_type,
+                    file_count=0,
+                ),
+            )
             return {"status": "ok"}
 
         cache_key = f"corrupted_{payload.count}_{time.time_ns()}"
@@ -104,12 +115,29 @@ async def media_integrity_webhook(
         )
 
         await _send_text(payload.summary_message, reply_markup)
-        logger.info("Sent media integrity summary: %s corrupted files", payload.count)
+        logger.info(
+            "Sent media integrity summary",
+            extra=webhook_log_context(
+                request,
+                "media-integrity",
+                event="webhook.accepted",
+                notification_type=payload.notification_type,
+                file_count=payload.count,
+            ),
+        )
         return {"status": "ok"}
     except HTTPException:
         raise
     except Exception as err:
-        logger.error("Media check webhook error: %s", err)
+        logger.exception(
+            "Media integrity webhook handling failed",
+            extra=webhook_log_context(
+                request,
+                "media-integrity",
+                event="webhook.failed",
+                error_type=type(err).__name__,
+            ),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
         ) from err

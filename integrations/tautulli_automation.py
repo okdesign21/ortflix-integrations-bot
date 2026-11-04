@@ -5,6 +5,7 @@ import os
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, status
+from pydantic import ValidationError
 
 from app_config import WEBHOOK_TOKEN
 
@@ -15,8 +16,10 @@ from .automation_defaults import (
     resolve_timeout_seconds,
     tautulli_script_for_event,
 )
+from .payloads import _normalize_tautulli_payload
 from .script_runner import run_python_script
 from .webhook_auth import require_valid_webhook_token
+from .webhook_logging import webhook_log_context
 
 logger = logging.getLogger(__name__)
 
@@ -102,11 +105,22 @@ async def tautulli_webhook(
         webhook_token = _webhook_token_getter()
         require_valid_webhook_token(webhook_token, x_webhook_token)
 
-        if not isinstance(payload, dict):
+        try:
+            payload = _normalize_tautulli_payload(payload)
+        except ValidationError as err:
+            logger.warning(
+                "Webhook payload validation failed",
+                extra=webhook_log_context(
+                    request,
+                    "tautulli",
+                    event="webhook.validation_failed",
+                    validation_error_count=len(err.errors()),
+                ),
+            )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Invalid Tautulli payload",
-            )
+            ) from err
 
         event = _event_from_payload(payload)
         if not event:
@@ -117,10 +131,29 @@ async def tautulli_webhook(
 
         script_name = tautulli_script_for_event(event)
         if not script_name:
-            logger.info("No Tautulli script configured for event: %s", event)
+            logger.info(
+                "No script configured for webhook event",
+                extra=webhook_log_context(
+                    request,
+                    "tautulli",
+                    event="webhook.ignored",
+                    event_type=event,
+                    scheduled=0,
+                ),
+            )
             return {"status": "ignored", "event": event, "scheduled": 0}
 
         background_tasks.add_task(_execute_tautulli_script, script_name, event, payload)
+        logger.info(
+            "Webhook scripts scheduled",
+            extra=webhook_log_context(
+                request,
+                "tautulli",
+                event="webhook.accepted",
+                event_type=event,
+                scheduled=1,
+            ),
+        )
         return {
             "status": "accepted",
             "event": event,
@@ -130,7 +163,15 @@ async def tautulli_webhook(
     except HTTPException:
         raise
     except Exception as err:
-        logger.error("Tautulli webhook handling error: %s", err)
+        logger.exception(
+            "Webhook handling failed",
+            extra=webhook_log_context(
+                request,
+                "tautulli",
+                event="webhook.failed",
+                error_type=type(err).__name__,
+            ),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",

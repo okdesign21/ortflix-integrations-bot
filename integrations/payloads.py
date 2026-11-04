@@ -1,5 +1,9 @@
 """Payload normalization for webhook inputs."""
 
+from typing import Any
+
+from .models import RadarrWebhook, SonarrWebhook, TautulliWebhook
+
 
 def _is_placeholder(value) -> bool:
     """Check if value is a templated placeholder or empty string."""
@@ -54,12 +58,9 @@ def _normalize_overseerr_payload(raw: dict) -> dict:
     return normalized
 
 
-def _normalize_radarr_payload(raw: dict) -> dict:
+def _normalize_radarr_payload(raw: Any) -> dict:
     """Normalize Radarr payload event key casing and nested objects."""
-    if not isinstance(raw, dict):
-        return {}
-
-    normalized = dict(raw)
+    normalized = RadarrWebhook.model_validate(raw).model_dump(by_alias=True, exclude_unset=True)
     # Keep both keys but guarantee the canonical eventType key exists when possible.
     if "eventType" not in normalized and "event" in normalized:
         normalized["eventType"] = normalized.get("event")
@@ -67,3 +68,13 @@ def _normalize_radarr_payload(raw: dict) -> dict:
         normalized["event"] = normalized.get("eventType")
 
     return normalized
+
+
+def _normalize_sonarr_payload(raw: Any) -> dict:
+    """Validate Sonarr fields while preserving fields unknown to this bot."""
+    return SonarrWebhook.model_validate(raw).model_dump(by_alias=True, exclude_unset=True)
+
+
+def _normalize_tautulli_payload(raw: Any) -> dict:
+    """Validate common Tautulli event fields while preserving custom fields."""
+    return TautulliWebhook.model_validate(raw).model_dump(by_alias=True, exclude_unset=True)

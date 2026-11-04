@@ -113,3 +113,12 @@ def test_every_action_has_a_script_and_a_valid_callback_size():
     for action_id, cfg in manual_actions.ACTIONS.items():
         assert (manual_actions.SCRIPTS_DIR / str(cfg["script"])).exists(), action_id
         assert len(f"manual_run_{action_id}".encode()) <= 64, action_id
+
+
+def test_truncate_output_uses_current_configured_limit(monkeypatch):
+    monkeypatch.setattr(manual_actions, "MAX_OUTPUT_CHARS", 200)
+
+    truncated = manual_actions._truncate_output("x" * 300)
+
+    assert truncated.startswith("x" * 40)
+    assert "truncated" in truncated

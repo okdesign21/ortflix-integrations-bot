@@ -13,6 +13,7 @@ from app_config import OVERSEERR_API_KEY, OVERSEERR_URL, RADARR_API_KEY, RADARR_
 from .models import OverseerrWebhook
 from .payloads import _normalize_overseerr_payload, _normalize_request_keys
 from .webhook_auth import require_valid_webhook_token
+from .webhook_logging import webhook_log_context
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +261,15 @@ async def overseerr_webhook(request: Request, x_webhook_token: Optional[str] = H
         try:
             payload = OverseerrWebhook.model_validate(normalized_payload)
         except ValidationError as err:
-            logger.error("Overseerr webhook validation error: %s", err)
+            logger.warning(
+                "Webhook payload validation failed",
+                extra=webhook_log_context(
+                    request,
+                    "overseerr",
+                    event="webhook.validation_failed",
+                    validation_error_count=len(err.errors()),
+                ),
+            )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Invalid Overseerr webhook payload",
@@ -273,7 +282,15 @@ async def overseerr_webhook(request: Request, x_webhook_token: Optional[str] = H
 
         handler_info = WEBHOOK_HANDLERS.get(payload.notification_type)
         if not handler_info:
-            logger.info("Unhandled notification type: %s", payload.notification_type)
+            logger.info(
+                "Unhandled webhook notification type",
+                extra=webhook_log_context(
+                    request,
+                    "overseerr",
+                    event="webhook.ignored",
+                    notification_type=payload.notification_type,
+                ),
+            )
             return {"status": "ok"}
 
         working_payload = await _enrich_payload_with_seerr_request(normalized_payload)
@@ -285,11 +302,28 @@ async def overseerr_webhook(request: Request, x_webhook_token: Optional[str] = H
             reply_markup = handler_info["reply_markup"](working_payload)
 
         await _sender(payload.image, caption, reply_markup)
+        logger.info(
+            "Webhook notification sent",
+            extra=webhook_log_context(
+                request,
+                "overseerr",
+                event="webhook.accepted",
+                notification_type=payload.notification_type,
+            ),
+        )
         return {"status": "ok"}
     except HTTPException:
         raise
     except Exception as err:
-        logger.error("Overseerr webhook handling error: %s", err)
+        logger.exception(
+            "Webhook handling failed",
+            extra=webhook_log_context(
+                request,
+                "overseerr",
+                event="webhook.failed",
+                error_type=type(err).__name__,
+            ),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
         ) from err
