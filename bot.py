@@ -3,12 +3,16 @@
 Handles webhooks and callback queries using extensible handler registry.
 """
 
+import json
 import logging
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from typing import Optional, cast
+from uuid import uuid4
 
 import uvicorn
 from fastapi import FastAPI
@@ -54,29 +58,56 @@ from integrations.tautulli_automation import router as tautulli_router
 
 
 # === LOGGING ===
-class _TelegramTokenRedactingFormatter(logging.Formatter):
-    """Sanitize rendered messages and tracebacks without changing the log layout."""
+class _StructuredJsonFormatter(logging.Formatter):
+    """Render parseable JSON logs while redacting sensitive diagnostics."""
 
-    def __init__(self, formatter: logging.Formatter) -> None:
-        super().__init__()
-        self._formatter = formatter
+    _CONTEXT_FIELDS = (
+        "component",
+        "error_type",
+        "event",
+        "event_type",
+        "file_count",
+        "method",
+        "notification_type",
+        "path",
+        "request_id",
+        "scheduled",
+        "status_code",
+        "validation_error_count",
+        "duration_ms",
+    )
 
     def format(self, record: logging.LogRecord) -> str:
-        return redact_diagnostic(self._formatter.format(record), (TELEGRAM_TOKEN,))
+        message = redact_diagnostic(record.getMessage(), (TELEGRAM_TOKEN,))
+        data = {
+            "timestamp": datetime.fromtimestamp(record.created, timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": message,
+        }
+        for field in self._CONTEXT_FIELDS:
+            value = getattr(record, field, None)
+            if value is not None:
+                if isinstance(value, str):
+                    value = redact_diagnostic(value, (TELEGRAM_TOKEN,))
+                data[field] = value
+        if record.exc_info:
+            data["exception"] = redact_diagnostic(
+                self.formatException(record.exc_info), (TELEGRAM_TOKEN,)
+            )
+        return json.dumps(data, ensure_ascii=False, default=str)
 
 
 def _configure_logging() -> None:
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
     logging.basicConfig(
         level=getattr(logging, log_level, logging.INFO),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
     )
     for handler in logging.getLogger().handlers:
-        if not isinstance(handler.formatter, _TelegramTokenRedactingFormatter):
-            handler.setFormatter(
-                _TelegramTokenRedactingFormatter(handler.formatter or logging.Formatter())
-            )
+        if not isinstance(handler.formatter, _StructuredJsonFormatter):
+            handler.setFormatter(_StructuredJsonFormatter())
     for name in ("httpx", "httpcore", "telegram"):
         logging.getLogger(name).setLevel(logging.WARNING)
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
@@ -171,6 +202,34 @@ app.include_router(media_integrity_integration.router)
 app.include_router(radarr_router)
 app.include_router(sonarr_router)
 app.include_router(tautulli_router)
+
+WEBHOOK_PATH_PREFIX = "/api/v1/webhooks/"
+
+
+@app.middleware("http")
+async def log_webhook_requests(request, call_next):
+    """Attach a request ID and log webhook HTTP outcomes as structured records."""
+    if not request.url.path.startswith(WEBHOOK_PATH_PREFIX):
+        return await call_next(request)
+
+    request_id = uuid4().hex
+    request.state.request_id = request_id
+    started_at = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "Webhook request completed",
+        extra={
+            "event": "webhook.request.completed",
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": duration_ms,
+        },
+    )
+    return response
 
 
 async def send_photo_or_message(image: Optional[str], caption: str, reply_markup=None) -> None:

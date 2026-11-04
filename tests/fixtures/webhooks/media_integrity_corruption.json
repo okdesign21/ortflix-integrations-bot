@@ -1,0 +1,12 @@
+{
+  "notification_type": "CORRUPTION_DETECTED",
+  "summary_message": "1 corrupted media file detected",
+  "count": 1,
+  "files": [
+    {
+      "path": "/media/Sample Movie (2024)/sample.mkv",
+      "size": "1.2GB",
+      "error": "Container error"
+    }
+  ]
+}

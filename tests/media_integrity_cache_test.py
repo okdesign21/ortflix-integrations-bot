@@ -33,7 +33,7 @@ async def test_media_corruption_cache_is_bounded(monkeypatch):
             count=idx + 1,
             files=[CorruptedFileInfo(path=f"/media/file{idx}.mkv", size="1GB", error="err")],
         )
-        result = await media_integrity_webhook(payload)
+        result = await media_integrity_webhook(payload, request=None)
         assert result["status"] == "ok"
 
     assert len(_corrupted_files_cache) == 2
@@ -64,8 +64,8 @@ async def test_get_latest_corruption_data_returns_latest_entry(monkeypatch):
         files=[CorruptedFileInfo(path="/b.mkv", size="2GB", error="err")],
     )
 
-    await media_integrity_webhook(first)
-    await media_integrity_webhook(second)
+    await media_integrity_webhook(first, request=None)
+    await media_integrity_webhook(second, request=None)
 
     latest = get_latest_corruption_data()
     assert latest is not None
@@ -92,7 +92,7 @@ async def test_media_corruption_callback_embeds_stable_cache_key(monkeypatch):
         files=[CorruptedFileInfo(path="/m/file.mkv", size="1GB", error="err")],
     )
 
-    result = await media_integrity_webhook(payload)
+    result = await media_integrity_webhook(payload, request=None)
     assert result["status"] == "ok"
     assert sent_messages
 

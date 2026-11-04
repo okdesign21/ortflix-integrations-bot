@@ -17,6 +17,7 @@ SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 
 MANUAL_ACTION_TIMEOUT = int(os.getenv("MANUAL_ACTION_TIMEOUT", "600"))
 MAX_OUTPUT_CHARS = int(os.getenv("MANUAL_ACTION_OUTPUT_LIMIT", "3500"))
+OUTPUT_TRUNCATION_RESERVE_CHARS = 160
 
 ACTIONS: dict[str, dict[str, object]] = {
     "plex_check_summary": {
@@ -119,10 +120,12 @@ def manual_actions_help_text() -> str:
     return "\n".join(lines)
 
 
-def _truncate_output(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
+def _truncate_output(text: str, limit: int | None = None) -> str:
+    if limit is None:
+        limit = MAX_OUTPUT_CHARS
     if len(text) <= limit:
         return text
-    head = max(0, limit - 160)
+    head = max(0, limit - OUTPUT_TRUNCATION_RESERVE_CHARS)
     omitted = len(text) - head
     return f"{text[:head]}\n\n... [truncated {omitted} chars]"
 

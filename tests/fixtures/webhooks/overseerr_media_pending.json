@@ -1,0 +1,14 @@
+{
+  "notification_type": "MEDIA_PENDING",
+  "subject": "Sample Movie",
+  "message": "A sample movie was requested",
+  "image": "https://example.invalid/sample-poster.jpg",
+  "media": {
+    "media_type": "movie",
+    "tmdbId": 12345
+  },
+  "request": {
+    "request_id": "67890",
+    "requestedBy_username": "sample-user"
+  }
+}

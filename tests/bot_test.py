@@ -1,6 +1,7 @@
 """Basic tests for the telegram bot."""
 
 import io
+import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -94,6 +95,26 @@ def test_log_formatter_redacts_tokens_in_messages_and_exceptions(secured_logging
     assert "[REDACTED]" in text
     assert token not in text
     assert other_token not in text
+
+
+def test_structured_formatter_emits_json_context(secured_logging):
+    bot_module, stream = secured_logging
+    bot_module.logger.info(
+        "Webhook scripts scheduled",
+        extra={
+            "event": "webhook.accepted",
+            "component": "radarr",
+            "request_id": "sample-request-id",
+            "scheduled": 2,
+        },
+    )
+
+    record = json.loads(stream.getvalue().splitlines()[-1])
+
+    assert record["event"] == "webhook.accepted"
+    assert record["component"] == "radarr"
+    assert record["request_id"] == "sample-request-id"
+    assert record["scheduled"] == 2
 
 
 def test_production_startup_redacts_uvicorn_exception_handlers(secured_logging, monkeypatch):

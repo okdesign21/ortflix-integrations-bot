@@ -1,0 +1,8 @@
+{
+  "event": "watched",
+  "username": "sample-user",
+  "title": "Sample Movie",
+  "year": 2024,
+  "themoviedb_id": 12345,
+  "imdb_id": "tt1234567"
+}

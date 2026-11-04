@@ -16,6 +16,7 @@ from .automation_defaults import (
     sonarr_scripts_for_event,
 )
 from .automation_webhook import dispatch_automation_webhook
+from .payloads import _normalize_sonarr_payload
 from .script_runner import run_python_script
 
 logger = logging.getLogger(__name__)
@@ -97,7 +98,7 @@ async def sonarr_webhook(
         background_tasks=background_tasks,
         provided_webhook_token=x_webhook_token,
         expected_webhook_token=_webhook_token_getter(),
-        payload_normalizer=lambda payload: payload if isinstance(payload, dict) else {},
+        payload_normalizer=_normalize_sonarr_payload,
         event_resolver=_sonarr_event_type,
         scripts_for_event=_resolve_sonarr_scripts_for_event,
         schedule_script=_execute_sonarr_script,

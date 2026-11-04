@@ -1,0 +1,17 @@
+{
+  "eventType": "Download",
+  "series": {
+    "id": 202,
+    "tvdbId": 54321,
+    "title": "Sample Series",
+    "year": 2023,
+    "path": "/tv/Sample Series",
+    "originalLanguage": {
+      "name": "English"
+    }
+  },
+  "episodeFile": {
+    "path": "/tv/Sample Series/Season 01/Sample.Series.S01E01.mkv",
+    "relativePath": "Season 01/Sample.Series.S01E01.mkv"
+  }
+}
