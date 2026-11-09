@@ -1,10 +1,10 @@
-FROM opensuse/tumbleweed@sha256:d95ddcc0ae62a9df3e6e424cb39a00ba74ef1744b02d7914bdbec4c7657baf01 AS base
+FROM opensuse/tumbleweed@sha256:ebb50331655239502a3e55b2c214c7de0f352d3b6c31bf2931144d1c3a809f21 AS base
 
 ENV PATH=/usr/local/bin:$PATH
 
 RUN zypper --non-interactive install --no-recommends \
-        python314-base=3.14.8-2.1 ffmpeg-8=8.1.3-3.3 mkvtoolnix=103.0-1.1 \
-        libxml2-16=2.15.4-1.1 libQt6Core6=6.12.0-2.1 util-linux=2.42.4-2.1 \
+        python314-base=3.14.8-2.1 ffmpeg-8=8.1.3-4.1 mkvtoolnix=103.0-1.1 \
+        libxml2-16=2.15.4-1.1 libQt6Core6=6.12.0-3.1 util-linux=2.42.4-2.1 \
         libsystemd0=261.4-1.1 libncurses6=6.6.20261017-116.1 libacl1=2.4.0-1.2 \
         ca-certificates=2+git20260727.241e0ff-1.1 && \
     zypper clean --all && \
