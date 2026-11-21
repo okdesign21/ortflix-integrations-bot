@@ -406,6 +406,46 @@ def test_scan_findings_and_errors_block_publication():
         assert '"$GITHUB_STEP_SUMMARY"' in summary["run"]
 
 
+@pytest.mark.parametrize("scanner_exit", [0, 1, 2])
+def test_gitleaks_scans_requested_snapshot_offline_and_propagates_exit(tmp_path, scanner_exit):
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("Requires Bash for Gitleaks workflow validation")
+    job = workflow("security.yml")["jobs"]["gitleaks"]
+    assert job["steps"][0]["with"]["ref"] == (
+        "${{ github.event.pull_request.head.sha || inputs.history_head || github.sha }}"
+    )
+    script = tmp_path / "gitleaks.sh"
+    script.write_text(
+        'git() { printf "%s\\n" "$*" > "$GIT_LOG"; }\n'
+        "tar() { cat >/dev/null; }\n"
+        'docker() { printf "%s\\n" "$@" > "$DOCKER_LOG"; return "$SCAN_EXIT"; }\n'
+        + job["steps"][-1]["run"],
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment.update(
+        RUNNER_TEMP=tmp_path.as_posix(),
+        GIT_LOG=(tmp_path / "git.log").as_posix(),
+        DOCKER_LOG=(tmp_path / "docker.log").as_posix(),
+        SCAN_EXIT=str(scanner_exit),
+    )
+    result = subprocess.run(
+        [bash, "-e", "-o", "pipefail", script.as_posix()],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == scanner_exit
+    assert (tmp_path / "git.log").read_text(encoding="utf-8").strip() == "archive HEAD"
+    args = (tmp_path / "docker.log").read_text(encoding="utf-8").splitlines()
+    assert args[:5] == ["run", "--rm", "--network", "none", "--read-only"]
+    assert args[5:7] == ["-v", f"{tmp_path.as_posix()}/tracked:/repo:ro"]
+    assert args[7].startswith("ghcr.io/gitleaks/gitleaks:")
+    assert args[8:11] == ["dir", "/repo", "--redact"]
+
+
 @pytest.mark.parametrize(
     "base,head,checkout,valid",
     [

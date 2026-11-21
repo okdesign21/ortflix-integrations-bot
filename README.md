@@ -272,7 +272,7 @@ Python 3.14, FFmpeg, MKVToolNix and their runtime libraries together with `zyppe
 There are no copied third-party binaries or locally compiled media packages.
 RPM package signatures are checked by the package manager, and the installed
 RPM database is retained for vulnerability scanning. Explicit package pins
-select FFmpeg 8.1.3, MKVToolNix 102.0 and libxml2 2.15.4, together with updated
+select FFmpeg 8.1.3, MKVToolNix 103.0 and libxml2 2.15.4, together with updated
 Qt, util-linux, systemd, ncurses and ACL libraries.
 
 Current CI validates Linux x86-64 (amd64). Other architectures offered by the
