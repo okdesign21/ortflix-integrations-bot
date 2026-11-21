@@ -226,7 +226,7 @@ application dependencies and compatibility minimums in `pyproject.toml`; see
 ```bash
 curl -X POST http://localhost:7777/api/v1/webhooks/overseerr \
   -H "Content-Type: application/json" \
-  -H "x-webhook-token: your_webhook_token" \
+  -H "x-webhook-token: $WEBHOOK_TOKEN" \
   -d '{"notification_type":"MEDIA_PENDING","subject":"Test","request":{"request_id":"123"}}'
 ```
 
@@ -272,7 +272,7 @@ Python 3.14, FFmpeg, MKVToolNix and their runtime libraries together with `zyppe
 There are no copied third-party binaries or locally compiled media packages.
 RPM package signatures are checked by the package manager, and the installed
 RPM database is retained for vulnerability scanning. Explicit package pins
-select FFmpeg 8.1.3, MKVToolNix 102.0 and libxml2 2.15.4, together with updated
+select FFmpeg 8.1.3, MKVToolNix 103.0 and libxml2 2.15.4, together with updated
 Qt, util-linux, systemd, ncurses and ACL libraries.
 
 Current CI validates Linux x86-64 (amd64). Other architectures offered by the
@@ -317,6 +317,10 @@ For custom host layouts, mount your media roots and set `AUDIO_LANG_MOVIES_DIRS`
 - `lint.yml` — lint and formatting checks
 - `security.yml` — secret and vulnerability scans
 - `release.yml` — tag-driven package/image publish and GitHub release
+
+Gitleaks scans a tracked-file snapshot offline with redacted findings. It does
+not scan Git history or untracked files; its pinned container version needs
+manual updates. The separate TruffleHog history scan remains in place.
 
 The release workflow runs on tags matching `v*`. For the planned release, create
 `v*.*.*`; setuptools-scm will publish package version and the Docker workflow
