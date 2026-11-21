@@ -226,7 +226,7 @@ application dependencies and compatibility minimums in `pyproject.toml`; see
 ```bash
 curl -X POST http://localhost:7777/api/v1/webhooks/overseerr \
   -H "Content-Type: application/json" \
-  -H "x-webhook-token: your_webhook_token" \
+  -H "x-webhook-token: $WEBHOOK_TOKEN" \
   -d '{"notification_type":"MEDIA_PENDING","subject":"Test","request":{"request_id":"123"}}'
 ```
 
@@ -317,6 +317,10 @@ For custom host layouts, mount your media roots and set `AUDIO_LANG_MOVIES_DIRS`
 - `lint.yml` — lint and formatting checks
 - `security.yml` — secret and vulnerability scans
 - `release.yml` — tag-driven package/image publish and GitHub release
+
+Gitleaks scans a tracked-file snapshot offline with redacted findings. It does
+not scan Git history or untracked files; its pinned container version needs
+manual updates. The separate TruffleHog history scan remains in place.
 
 The release workflow runs on tags matching `v*`. For the planned release, create
 `v*.*.*`; setuptools-scm will publish package version and the Docker workflow

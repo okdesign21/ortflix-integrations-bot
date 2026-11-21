@@ -28,6 +28,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.run_id }}
 
 jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || inputs.history_head || github.sha }}
+      - name: Scan tracked files without network access
+        run: |
+          mkdir -p "$RUNNER_TEMP/tracked"
+          git archive HEAD | tar -xf - -C "$RUNNER_TEMP/tracked"
+          docker run --rm --network none --read-only \
+            -v "$RUNNER_TEMP/tracked:/repo:ro" \
+            ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            dir /repo --redact --no-banner --no-color --verbose
+
   trufflehog:
     if: >-
       ${{ github.event_name == 'pull_request' ||
